@@ -5,12 +5,15 @@ from langgraph.graph.message import add_messages
 from dotenv import load_dotenv
 from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_community.chat_message_histories import SQLChatMessageHistory
 from typing import List, Any, Optional, Dict
 from pydantic import BaseModel, Field
 from sidekick_tools import playwright_tools, other_tools
+from user_profile import UserProfile
 import uuid
+import aiosqlite
 import asyncio
 from datetime import datetime
 
@@ -33,33 +36,102 @@ class EvaluatorOutput(BaseModel):
     )
 
 
+class ProfileFact(BaseModel):
+    key: str = Field(description="Snake_case fact name, e.g. 'name', 'location', 'preferred_output_format'")
+    value: str = Field(description="The fact value, concise and specific")
+
+
+class ProfileUpdate(BaseModel):
+    facts: List[ProfileFact] = Field(
+        description="Facts learned about the user from this conversation. Empty list if nothing new."
+    )
+
+
 class Sidekick:
-    def __init__(self):
+    def __init__(self, session_id: str = None):
         self.worker_llm_with_tools = None
         self.evaluator_llm_with_output = None
         self.tools = None
         self.llm_with_tools = None
         self.graph = None
-        self.sidekick_id = str(uuid.uuid4())
-        self.memory = MemorySaver()
+        self.sidekick_id = session_id or str(uuid.uuid4())
+        self._db_conn = None
+        self.memory = None
+        self.chat_history = SQLChatMessageHistory(
+            session_id=self.sidekick_id,
+            connection="sqlite:///sidekick_chat_history.db",
+        )
+        self.user_profile = UserProfile()
         self.browser = None
         self.playwright = None
 
     async def setup(self):
+        self._db_conn = await aiosqlite.connect("sidekick_checkpoints.db")
+        self.memory = AsyncSqliteSaver(self._db_conn)
         self.tools, self.browser, self.playwright = await playwright_tools()
         self.tools += await other_tools()
-        worker_llm = ChatOpenAI(model="gpt-4o-mini")
+        worker_llm = ChatOpenAI(model="gpt-5.2-chat-latest")
         self.worker_llm_with_tools = worker_llm.bind_tools(self.tools)
-        evaluator_llm = ChatOpenAI(model="gpt-4o-mini")
+        evaluator_llm = ChatOpenAI(model="gpt-5.2-chat-latest")
         self.evaluator_llm_with_output = evaluator_llm.with_structured_output(EvaluatorOutput)
         await self.build_graph()
 
+    def _get_memory_context(self) -> str:
+        """Build a compact memory block: user profile + last 3 conversation pairs."""
+        profile_block = self.user_profile.get_prompt_block()
+
+        # Only inject the last 3 message pairs (6 messages) to keep the prompt short
+        past = self.chat_history.messages[-6:]
+        if not past:
+            return profile_block
+
+        lines = []
+        for msg in past:
+            role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+            content = msg.content[:300]
+            lines.append(f"  {role}: {content}")
+        recent_block = (
+            "\n\n    Recent conversation history:\n" + "\n".join(lines)
+        )
+        return profile_block + recent_block
+
+    async def _extract_and_update_profile(self, user_message: str, assistant_reply: str):
+        """Use an LLM to extract user facts from the latest exchange and persist them."""
+        extractor_llm = ChatOpenAI(model="gpt-5.2-chat-latest").with_structured_output(ProfileUpdate)
+        existing = self.user_profile.get_all()
+        existing_summary = ", ".join(f"{k}={v}" for k, v in existing.items()) if existing else "none yet"
+
+        prompt = f"""You extract facts about a user from their conversation with an AI assistant.
+Only extract facts that are explicitly stated or clearly implied about the USER (not the assistant).
+Examples of good facts: name, location, occupation, interests, preferred_language, preferred_output_format, technical_level.
+Do NOT repeat facts already known: {existing_summary}
+Do NOT invent facts. Return an empty list if nothing new is learned.
+
+User said: {user_message}
+Assistant replied: {assistant_reply[:500]}"""
+
+        result = extractor_llm.invoke([HumanMessage(content=prompt)])
+        for fact in result.facts:
+            self.user_profile.upsert(fact.key, fact.value)
+
     def worker(self, state: State) -> Dict[str, Any]:
+        memory_context = self._get_memory_context()
         system_message = f"""You are a helpful assistant that can use tools to complete tasks.
     You keep working on a task until either you have a question or clarification for the user, or the success criteria is met.
-    You have many tools to help you, including tools to browse the internet, navigating and retrieving web pages.
-    You have a tool to run python code, but note that you would need to include a print() statement if you wanted to receive output.
     The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+    {memory_context}
+
+    You have the following tools available:
+    - Web browsing: Navigate to URLs, click links, fill forms, and extract content from web pages.
+    - Web search: Search the internet using Google for up-to-date information.
+    - File management: Read, write, move, copy, delete, and list files in the sandbox directory.
+    - Python execution: Run Python code. Include print() statements to receive output.
+    - Wikipedia: Look up general knowledge topics on Wikipedia.
+    - PDF reader: Extract text from PDF files in the sandbox directory. Pass the file path relative to the sandbox folder.
+    - PDF creator: Create a proper, valid PDF file in the sandbox. Pass a JSON string with 'filename', 'title', and 'content'. ALWAYS use this instead of write_file when creating .pdf files.
+    - arXiv search: Search for academic papers on arXiv by topic, author, or keyword.
+    - YouTube transcripts: Fetch the transcript of any YouTube video by passing its URL or video ID.
+    - Push notifications: Send push notifications to alert the user.
 
     This is the success criteria:
     {state["success_criteria"]}
@@ -202,11 +274,65 @@ class Sidekick:
             "success_criteria_met": False,
             "user_input_needed": False,
         }
-        result = await self.graph.ainvoke(state, config=config)
-        user = {"role": "user", "content": message}
-        reply = {"role": "assistant", "content": result["messages"][-2].content}
-        feedback = {"role": "assistant", "content": result["messages"][-1].content}
-        return history + [user, reply, feedback]
+
+        user_msg = {"role": "user", "content": message}
+        history = history + [user_msg]
+        yield history
+
+        worker_reply_content = ""
+        evaluator_feedback_content = ""
+
+        async for chunk in self.graph.astream(state, config=config):
+            for node_name, node_output in chunk.items():
+                if node_name == "worker":
+                    ai_msg = node_output["messages"][-1]
+                    if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
+                        for tc in ai_msg.tool_calls:
+                            args_summary = ", ".join(
+                                f"{k}={repr(v)[:80]}" for k, v in tc["args"].items()
+                            )
+                            tool_msg = {
+                                "role": "assistant",
+                                "content": f"**{tc['name']}**({args_summary})",
+                                "metadata": {"title": f"🔧 Calling tool: {tc['name']}"},
+                            }
+                            history = history + [tool_msg]
+                        yield history
+                    else:
+                        worker_reply_content = ai_msg.content
+
+                elif node_name == "tools":
+                    for tool_result in node_output["messages"]:
+                        content = tool_result.content if hasattr(tool_result, "content") else str(tool_result)
+                        truncated = content[:500] + ("..." if len(content) > 500 else "")
+                        tool_name = tool_result.name if hasattr(tool_result, "name") else "tool"
+                        result_msg = {
+                            "role": "assistant",
+                            "content": truncated,
+                            "metadata": {"title": f"📋 Result: {tool_name}"},
+                        }
+                        history = history + [result_msg]
+                    yield history
+
+                elif node_name == "evaluator":
+                    evaluator_feedback_content = node_output["messages"][-1]["content"] if node_output.get("messages") else ""
+
+        # Add the final worker reply and evaluator feedback
+        if worker_reply_content:
+            reply = {"role": "assistant", "content": worker_reply_content}
+            history = history + [reply]
+            yield history
+
+        if evaluator_feedback_content:
+            feedback = {"role": "assistant", "content": evaluator_feedback_content}
+            history = history + [feedback]
+            yield history
+
+        # Persist to long-term memory
+        if worker_reply_content:
+            self.chat_history.add_user_message(message)
+            self.chat_history.add_ai_message(worker_reply_content)
+            await self._extract_and_update_profile(message, worker_reply_content)
 
     def cleanup(self):
         if self.browser:
@@ -216,7 +342,12 @@ class Sidekick:
                 if self.playwright:
                     loop.create_task(self.playwright.stop())
             except RuntimeError:
-                # If no loop is running, do a direct run
                 asyncio.run(self.browser.close())
                 if self.playwright:
                     asyncio.run(self.playwright.stop())
+        if self._db_conn:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._db_conn.close())
+            except RuntimeError:
+                asyncio.run(self._db_conn.close())
