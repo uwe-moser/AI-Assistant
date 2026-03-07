@@ -2,13 +2,11 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-from config import DB_PATH
-
 
 class SessionManager:
     """Manages named sessions backed by the SQLite chat history database."""
 
-    def __init__(self, db_path: str = DB_PATH):
+    def __init__(self, db_path: str = "sidekick_chat_history.db"):
         self._db_path = db_path
         self._ensure_table()
 

@@ -1,14 +1,12 @@
 import sqlite3
 import json
 
-from config import DB_PATH, CHECKPOINTS_DB_PATH
-
 # ── Chat History ──────────────────────────────────────────────────────────────
 print("=" * 60)
-print(f"CHAT HISTORY  ({DB_PATH})")
+print("CHAT HISTORY  (sidekick_chat_history.db)")
 print("=" * 60)
 
-conn = sqlite3.connect(DB_PATH)
+conn = sqlite3.connect("sidekick_chat_history.db")
 rows = conn.execute("SELECT id, session_id, message FROM message_store ORDER BY id").fetchall()
 conn.close()
 
@@ -20,10 +18,10 @@ for id_, session_id, raw in rows:
 
 # ── Checkpoints ───────────────────────────────────────────────────────────────
 print("=" * 60)
-print(f"CHECKPOINTS  ({CHECKPOINTS_DB_PATH})")
+print("CHECKPOINTS  (sidekick_checkpoints.db)")
 print("=" * 60)
 
-conn = sqlite3.connect(CHECKPOINTS_DB_PATH)
+conn = sqlite3.connect("sidekick_checkpoints.db")
 rows = conn.execute(
     "SELECT thread_id, checkpoint_id, parent_checkpoint_id FROM checkpoints ORDER BY checkpoint_id"
 ).fetchall()

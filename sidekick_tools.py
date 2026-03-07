@@ -1,47 +1,27 @@
-import json
-import logging
-import os
-from urllib.parse import urlparse, parse_qs
-
-import requests
-from fpdf import FPDF
-from langchain.agents import Tool
-from langchain_community.agent_toolkits import FileManagementToolkit, PlayWrightBrowserToolkit
-from langchain_community.tools.arxiv.tool import ArxivQueryRun
-from langchain_community.tools.wikipedia.tool import WikipediaQueryRun
-from langchain_community.utilities import GoogleSerperAPIWrapper
-from langchain_community.utilities.arxiv import ArxivAPIWrapper
-from langchain_community.utilities.wikipedia import WikipediaAPIWrapper
-from langchain_experimental.tools import PythonREPLTool
 from playwright.async_api import async_playwright
+from langchain_community.agent_toolkits import PlayWrightBrowserToolkit
+from dotenv import load_dotenv
+import os
+import requests
+from langchain_core.tools import Tool
+from langchain_community.agent_toolkits import FileManagementToolkit
+from langchain_community.tools.wikipedia.tool import WikipediaQueryRun
+from langchain_experimental.tools import PythonREPLTool
+from langchain_community.utilities import GoogleSerperAPIWrapper
+from langchain_community.utilities.wikipedia import WikipediaAPIWrapper
+from langchain_community.tools.arxiv.tool import ArxivQueryRun
+from langchain_community.utilities.arxiv import ArxivAPIWrapper
 from pypdf import PdfReader
 from youtube_transcript_api import YouTubeTranscriptApi
-
-from config import SANDBOX_DIR, PUSHOVER_URL, FONT_SEARCH_PATHS
-
-logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Lazy accessors for env-var-dependent globals
-# ---------------------------------------------------------------------------
-
-_serper = None
+from fpdf import FPDF
 
 
-def _get_serper() -> GoogleSerperAPIWrapper:
-    global _serper
-    if _serper is None:
-        _serper = GoogleSerperAPIWrapper()
-    return _serper
 
-
-def _get_pushover_credentials() -> tuple[str | None, str | None]:
-    return os.getenv("PUSHOVER_TOKEN"), os.getenv("PUSHOVER_USER")
-
-
-# ---------------------------------------------------------------------------
-# Playwright
-# ---------------------------------------------------------------------------
+load_dotenv(override=True)
+pushover_token = os.getenv("PUSHOVER_TOKEN")
+pushover_user = os.getenv("PUSHOVER_USER")
+pushover_url = "https://api.pushover.net/1/messages.json"
+serper = GoogleSerperAPIWrapper()
 
 async def playwright_tools():
     playwright = await async_playwright().start()
@@ -50,40 +30,20 @@ async def playwright_tools():
     return toolkit.get_tools(), browser, playwright
 
 
-# ---------------------------------------------------------------------------
-# Push notifications
-# ---------------------------------------------------------------------------
-
-def push(text: str) -> str:
-    """Send a push notification to the user."""
-    token, user = _get_pushover_credentials()
-    if not token or not user:
-        return "Error: PUSHOVER_TOKEN or PUSHOVER_USER not configured"
-    try:
-        resp = requests.post(PUSHOVER_URL, data={"token": token, "user": user, "message": text})
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        logger.error("Push notification failed: %s", exc)
-        return f"Error sending push notification: {exc}"
+def push(text: str):
+    """Send a push notification to the user"""
+    requests.post(pushover_url, data = {"token": pushover_token, "user": pushover_user, "message": text})
     return "success"
 
 
-# ---------------------------------------------------------------------------
-# File tools
-# ---------------------------------------------------------------------------
-
 def get_file_tools():
-    toolkit = FileManagementToolkit(root_dir=SANDBOX_DIR)
+    toolkit = FileManagementToolkit(root_dir="sandbox")
     return toolkit.get_tools()
 
 
-# ---------------------------------------------------------------------------
-# PDF tools
-# ---------------------------------------------------------------------------
-
 def read_pdf(file_path: str) -> str:
     """Read text content from a PDF file in the sandbox directory."""
-    full_path = os.path.join(SANDBOX_DIR, file_path)
+    full_path = os.path.join("sandbox", file_path)
     if not os.path.isfile(full_path):
         return f"Error: file not found at {full_path}"
     reader = PdfReader(full_path)
@@ -97,59 +57,57 @@ def read_pdf(file_path: str) -> str:
     return "\n\n".join(pages)
 
 
-_UNICODE_REPLACEMENTS = {
-    "\u2014": "--",   # em-dash
-    "\u2013": "-",    # en-dash
-    "\u2018": "'",    # left single quote
-    "\u2019": "'",    # right single quote
-    "\u201c": '"',    # left double quote
-    "\u201d": '"',    # right double quote
-    "\u2026": "...",  # ellipsis
-    "\u2022": "-",    # bullet
-    "\u00a0": " ",    # non-breaking space
-    "\u200b": "",     # zero-width space
-}
-
-
 def _sanitize_for_pdf(text: str) -> str:
     """Replace Unicode characters that cause issues with built-in PDF fonts."""
-    for char, repl in _UNICODE_REPLACEMENTS.items():
+    replacements = {
+        "\u2014": "--",   # em-dash
+        "\u2013": "-",    # en-dash
+        "\u2018": "'",    # left single quote
+        "\u2019": "'",    # right single quote
+        "\u201c": '"',    # left double quote
+        "\u201d": '"',    # right double quote
+        "\u2026": "...",  # ellipsis
+        "\u2022": "-",    # bullet
+        "\u00a0": " ",    # non-breaking space
+        "\u200b": "",     # zero-width space
+    }
+    for char, repl in replacements.items():
         text = text.replace(char, repl)
     return text
 
 
-def _find_unicode_font() -> str | None:
-    """Return the first available TTF font path, or None."""
-    for path in FONT_SEARCH_PATHS:
-        if os.path.exists(path):
-            return path
-    return None
-
-
-def create_pdf(filename: str, content: str, title: str = "") -> str:
-    """Create a PDF file in the sandbox directory.
-
-    Args:
-        filename: Output filename (e.g. 'report.pdf').
-        content: The body text.
-        title: Optional heading for the document.
+def create_pdf(input: str) -> str:
+    """Create a proper PDF file in the sandbox directory from a title and text content.
+    Input must be a JSON string with keys: 'filename', 'title' (optional), 'content'.
+    Example: {"filename": "report.pdf", "title": "My Report", "content": "Text here..."}
     """
+    import json
+    try:
+        data = json.loads(input)
+    except json.JSONDecodeError as e:
+        return f"Error: input must be valid JSON. {e}"
+
+    filename = data.get("filename", "output.pdf")
+    title = data.get("title", "")
+    content = data.get("content", "")
+
     if not filename.endswith(".pdf"):
         filename += ".pdf"
 
-    full_path = os.path.join(SANDBOX_DIR, filename)
-    os.makedirs(SANDBOX_DIR, exist_ok=True)
+    full_path = os.path.join("sandbox", filename)
+    os.makedirs("sandbox", exist_ok=True)
 
     pdf = FPDF()
     pdf.set_margins(20, 20, 20)
     pdf.add_page()
 
-    ttf_path = _find_unicode_font()
+    # Try to use a Unicode-capable TTF font, fall back to Helvetica with sanitization
     unicode_font = False
-    if ttf_path:
+    ttf_path = "/Library/Fonts/Arial Unicode.ttf"
+    if os.path.exists(ttf_path):
         try:
-            pdf.add_font("UnicodeFont", "", ttf_path)
-            pdf.add_font("UnicodeFont", "B", ttf_path)
+            pdf.add_font("ArialUnicode", "", ttf_path)
+            pdf.add_font("ArialUnicode", "B", ttf_path)
             unicode_font = True
         except Exception:
             pass
@@ -158,7 +116,7 @@ def create_pdf(filename: str, content: str, title: str = "") -> str:
         title = _sanitize_for_pdf(title)
         content = _sanitize_for_pdf(content)
 
-    font_family = "UnicodeFont" if unicode_font else "Helvetica"
+    font_family = "ArialUnicode" if unicode_font else "Helvetica"
 
     if title:
         pdf.set_font(font_family, style="B", size=16)
@@ -173,59 +131,32 @@ def create_pdf(filename: str, content: str, title: str = "") -> str:
             pdf.multi_cell(0, 7, paragraph)
 
     pdf.output(full_path)
-    return f"PDF successfully created at {SANDBOX_DIR}/{filename}"
+    return f"PDF successfully created at sandbox/{filename}"
 
-
-# Wrapper that accepts a JSON string for backward compatibility with LangChain Tool
-def _create_pdf_from_json(input_str: str) -> str:
-    """Parse JSON input and delegate to create_pdf."""
-    try:
-        data = json.loads(input_str)
-    except json.JSONDecodeError as e:
-        return f"Error: input must be valid JSON. {e}"
-    return create_pdf(
-        filename=data.get("filename", "output.pdf"),
-        content=data.get("content", ""),
-        title=data.get("title", ""),
-    )
-
-
-# ---------------------------------------------------------------------------
-# YouTube transcripts
-# ---------------------------------------------------------------------------
 
 def get_youtube_transcript(url_or_id: str) -> str:
     """Get the transcript of a YouTube video given its URL or video ID."""
     video_id = url_or_id.strip()
-
-    parsed = urlparse(video_id)
-    if parsed.hostname in ("www.youtube.com", "youtube.com", "m.youtube.com"):
-        qs = parse_qs(parsed.query)
-        video_id = qs.get("v", [video_id])[0]
-    elif parsed.hostname == "youtu.be":
-        video_id = parsed.path.lstrip("/")
-
+    # Extract video ID from common URL formats
+    for prefix in ["https://www.youtube.com/watch?v=", "https://youtube.com/watch?v=",
+                    "https://youtu.be/", "https://m.youtube.com/watch?v="]:
+        if video_id.startswith(prefix):
+            video_id = video_id[len(prefix):].split("&")[0].split("?")[0]
+            break
     ytt_api = YouTubeTranscriptApi()
     transcript = ytt_api.fetch(video_id)
     lines = [entry.text for entry in transcript.snippets]
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Tool registration
-# ---------------------------------------------------------------------------
-
-def other_tools():
+async def other_tools():
     push_tool = Tool(name="send_push_notification", func=push, description="Use this tool when you want to send a push notification")
     file_tools = get_file_tools()
 
-    def _search(query: str) -> str:
-        return _get_serper().run(query)
-
     tool_search = Tool(
         name="search",
-        func=_search,
-        description="Use this tool when you want to get the results of an online web search",
+        func=serper.run,
+        description="Use this tool when you want to get the results of an online web search"
     )
 
     wikipedia = WikipediaAPIWrapper()
@@ -239,18 +170,18 @@ def other_tools():
     pdf_tool = Tool(
         name="read_pdf",
         func=read_pdf,
-        description="Read and extract text from a PDF file in the sandbox directory. Pass the file path relative to the sandbox folder.",
+        description="Read and extract text from a PDF file in the sandbox directory. Pass the file path relative to the sandbox folder."
     )
 
     youtube_tool = Tool(
         name="get_youtube_transcript",
         func=get_youtube_transcript,
-        description="Get the transcript of a YouTube video. Pass a YouTube URL or video ID.",
+        description="Get the transcript of a YouTube video. Pass a YouTube URL or video ID."
     )
 
     create_pdf_tool = Tool(
         name="create_pdf",
-        func=_create_pdf_from_json,
+        func=create_pdf,
         description=(
             "Create a valid, openable PDF file in the sandbox directory. "
             "ALWAYS use this tool instead of write_file when the output filename ends in .pdf. "
@@ -261,3 +192,4 @@ def other_tools():
     )
 
     return file_tools + [push_tool, tool_search, python_repl, wiki_tool, arxiv_tool, pdf_tool, youtube_tool, create_pdf_tool]
+
