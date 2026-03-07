@@ -1,11 +1,13 @@
 import sqlite3
 from datetime import datetime
 
+from config import DB_PATH
+
 
 class UserProfile:
     """Persistent key-value store for user metadata, backed by SQLite."""
 
-    def __init__(self, db_path: str = "sidekick_chat_history.db"):
+    def __init__(self, db_path: str = DB_PATH):
         self._db_path = db_path
         self._ensure_table()
 

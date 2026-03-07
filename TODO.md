@@ -18,44 +18,44 @@ _Nothing currently in progress._
 
 #### 1.1 Configuration & Constants — eliminate duplication
 
-- [ ] **Centralise configuration** — the DB path `"sidekick_chat_history.db"` is hardcoded in 3 files ([sidekick.py:61](sidekick.py), [app.py:20](app.py), [session_manager.py:9](session_manager.py)), and `"sidekick_checkpoints.db"` in [sidekick.py:69](sidekick.py). Create a single `config.py` with `DB_PATH`, `CHECKPOINTS_DB_PATH`, `SANDBOX_DIR`, `DEFAULT_MODEL`, etc.
-- [ ] **Single `load_dotenv()` call** — currently called in both [sidekick.py:5](sidekick.py) and [sidekick_tools.py:20](sidekick_tools.py). Call it once at startup in `app.py` and remove from other modules.
-- [ ] **Remove module-level side effects in `sidekick_tools.py`** — `serper`, `pushover_token`, `pushover_user` are instantiated/read at import time (lines 21–24). Move into factory functions or a lazy initialiser so missing env vars don't crash unrelated imports.
+- [x] **Centralise configuration** — created `config.py` with `DB_PATH`, `CHECKPOINTS_DB_PATH`, `SANDBOX_DIR`, `DEFAULT_MODEL`, `PUSHOVER_URL`, `FONT_SEARCH_PATHS`. All files now import from it.
+- [x] **Single `load_dotenv()` call** — called once at the top of `app.py`; removed from `sidekick.py` and `sidekick_tools.py`.
+- [x] **Remove module-level side effects in `sidekick_tools.py`** — `serper` uses lazy `_get_serper()`; pushover credentials read via `_get_pushover_credentials()` at call time.
 
 #### 1.2 `sidekick_tools.py` — restructure and harden
 
-- [ ] **`other_tools()` is needlessly `async`** — nothing inside is awaited. Make it a plain `def` (or remove it and inline the list).
-- [ ] **`create_pdf` accepts a raw JSON string** instead of typed parameters — fragile and error-prone. Convert to proper keyword arguments and let LangChain handle serialisation, or at minimum parse with a Pydantic model.
-- [ ] **Hardcoded macOS font path** — `"/Library/Fonts/Arial Unicode.ttf"` ([sidekick_tools.py:106](sidekick_tools.py)) will fail on Linux/Windows. Search common font dirs or bundle a fallback TTF.
-- [ ] **`import json` inside function body** ([sidekick_tools.py:85](sidekick_tools.py)) — move to module-level imports.
-- [ ] **`push()` silently swallows HTTP errors** — no status-code check, no exception handling. Add basic error reporting.
-- [ ] **YouTube URL parsing is brittle** — the prefix-stripping loop doesn't handle `&` parameters in the middle of URLs correctly. Use `urllib.parse.urlparse` + `parse_qs` instead.
+- [x] **`other_tools()` is needlessly `async`** — converted to plain `def`.
+- [x] **`create_pdf` accepts a raw JSON string** — refactored to typed `create_pdf(filename, content, title)` with a `_create_pdf_from_json` wrapper for LangChain Tool compatibility.
+- [x] **Hardcoded macOS font path** — now searches `FONT_SEARCH_PATHS` (macOS, Debian, Arch, Windows) via `_find_unicode_font()`.
+- [x] **`import json` inside function body** — moved to module-level imports.
+- [x] **`push()` silently swallows HTTP errors** — now calls `raise_for_status()`, catches `RequestException`, and logs errors.
+- [x] **YouTube URL parsing is brittle** — rewritten with `urllib.parse.urlparse` + `parse_qs`.
 - [ ] **Extract tool registration into grouped modules** (optional, for larger scale) — e.g. `tools/browser.py`, `tools/documents.py`, `tools/research.py`, `tools/notifications.py`. Each exports a `get_tools() -> list[Tool]` function.
 
 #### 1.3 `sidekick.py` — agent core cleanup
 
-- [ ] **Dead attribute `self.llm_with_tools`** ([sidekick.py:55](sidekick.py)) — initialised to `None`, never assigned or read. Remove it.
-- [ ] **Worker mutates message objects in-place** — the loop at lines 155–160 overwrites `SystemMessage.content` on existing state messages. This is a hidden side effect that can corrupt checkpoint history. Instead, always prepend a fresh `SystemMessage` and filter out old ones.
-- [ ] **System prompt is a 25-line f-string rebuilt every call** — extract into a `_build_worker_prompt(state) -> str` helper or a prompt template file. The tool-description block is static and can be a constant.
-- [ ] **`evaluator()` return type annotation says `-> State` but returns a plain `dict`** ([sidekick.py:191](sidekick.py)) — fix the annotation to `-> dict[str, Any]`.
-- [ ] **`_extract_and_update_profile` creates a new `ChatOpenAI` instance on every call** ([sidekick.py:100](sidekick.py)) — instantiate once during `setup()` and reuse.
-- [ ] **`format_conversation` is only used by the evaluator** — inline it or make it a module-level helper; it doesn't need `self`.
-- [ ] **Fragile `cleanup()` with dual async paths** ([sidekick.py:337–353](sidekick.py)) — the `try/except RuntimeError` pattern for detecting a running loop is brittle. Use `asyncio.get_event_loop().is_running()` or provide both a sync and async cleanup method. Better yet, use `async with` context-manager protocol on `Sidekick`.
-- [ ] **`build_graph` doesn't need to be `async`** — nothing inside is awaited. Make it a plain `def`.
+- [x] **Dead attribute `self.llm_with_tools`** — removed.
+- [x] **Worker mutates message objects in-place** — now filters out old `SystemMessage`s and prepends a fresh one.
+- [x] **System prompt is a 25-line f-string rebuilt every call** — extracted into `_build_worker_prompt()` helper with `_TOOL_DESCRIPTION_BLOCK` constant.
+- [x] **`evaluator()` return type annotation says `-> State` but returns a plain `dict`** — fixed to `-> dict[str, Any]`.
+- [x] **`_extract_and_update_profile` creates a new `ChatOpenAI` instance on every call** — now instantiated once in `setup()` as `self._profile_extractor`.
+- [x] **`format_conversation` is only used by the evaluator** — moved to module-level `_format_conversation()`.
+- [x] **Fragile `cleanup()` with dual async paths** — extracted `_async_cleanup()` method; `cleanup()` dispatches to it cleanly.
+- [x] **`build_graph` doesn't need to be `async`** — converted to plain `def`.
 
 #### 1.4 `app.py` — UI and startup
 
-- [ ] **Inline HTML/CSS is ~80 lines of raw strings** — extract into a separate `templates/` or `ui_components.py` file, or at minimum into module-level constants, so `app.py` focuses on event wiring.
-- [ ] **Logo loading crashes if `ApexFlow.png` is missing** ([app.py:10–11](app.py)) — wrap in `try/except` with a graceful fallback.
+- [x] **Inline HTML/CSS is ~80 lines of raw strings** — extracted to `ui_components.py` (`build_header_html()` and `CAPABILITIES_HTML`).
+- [x] **Logo loading crashes if `ApexFlow.png` is missing** — wrapped in `try/except FileNotFoundError` with graceful fallback.
 - [ ] **`get_history_for_session` creates a new `SQLChatMessageHistory` per call** ([app.py:19](app.py)) — reuse the connection or cache the object.
-- [ ] **Duplicate Sidekick lifecycle pattern** — `switch_session`, `create_new_session`, and `reset` all repeat the same `free_resources → Sidekick → setup` sequence. Extract a `_new_sidekick(session_id)` helper.
+- [x] **Duplicate Sidekick lifecycle pattern** — extracted `_new_sidekick(session_id, old_sidekick)` helper used by all lifecycle functions.
 
 #### 1.5 General code quality
 
-- [ ] **No logging** — the only output is `print("Cleaning up")` ([app.py:93](app.py)). Replace with Python `logging` module with configurable levels.
-- [ ] **Unused dependencies in `pyproject.toml`** — `anthropic`, `langchain-anthropic`, `semantic-kernel`, `autogen-agentchat`, `autogen-ext`, `polygon-api-client`, `sendgrid`, `speedtest-cli`, `smithery`, `mcp-server-fetch`, `mcp[cli]`, `openai-agents` appear unused in any source file. Audit and remove to shrink install time and avoid conflicts.
-- [ ] **`readdb.py` uses hardcoded DB paths** — should import from the proposed `config.py`.
-- [ ] **No `__main__` guard in `app.py`** — `ui.launch()` runs on import. Wrap in `if __name__ == "__main__":`.
+- [x] **No logging** — added `logging.basicConfig` in `app.py` and `logger` instances in `app.py`, `sidekick.py`, `sidekick_tools.py`.
+- [x] **Unused dependencies in `pyproject.toml`** — removed 12 unused packages (`anthropic`, `langchain-anthropic`, `semantic-kernel`, `autogen-*`, `polygon-api-client`, `sendgrid`, `speedtest-cli`, `smithery`, `mcp-*`, `openai-agents`, `pypdf2`, `ipywidgets`, `plotly`, `psutil`, `langsmith`, `setuptools`).
+- [x] **`readdb.py` uses hardcoded DB paths** — now imports from `config.py`.
+- [x] **No `__main__` guard in `app.py`** — added `if __name__ == "__main__":` guard.
 
 #### 1.6 Weakness summary
 
