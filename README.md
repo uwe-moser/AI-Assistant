@@ -120,6 +120,44 @@ The Gradio UI opens in your browser automatically. Stop with `Ctrl+C`.
 
 ---
 
+## Testing
+
+### Install test dependencies
+
+Test dependencies are part of the `dev` group and are included with:
+
+```bash
+uv sync --dev
+```
+
+### Run the tests
+
+```bash
+# Run all tests
+uv run pytest
+
+# Verbose output with short tracebacks
+uv run pytest -v --tb=short
+
+# Run a specific test class
+uv run pytest tests/test_tools_unit.py::TestCreatePdf -v
+
+# Run a specific test
+uv run pytest tests/test_tools_unit.py::TestGetYoutubeTranscript::test_joins_transcript_lines -v
+```
+
+### Coverage report
+
+```bash
+# Terminal summary (shows uncovered lines)
+uv run pytest --cov --cov-report=term-missing
+
+# HTML report (open htmlcov/index.html in a browser)
+uv run pytest --cov --cov-report=html
+```
+
+---
+
 ## Usage
 
 1. Open the browser UI (launches at `http://localhost:7860` by default).
@@ -144,7 +182,10 @@ AI-Assistant/
 ├── readdb.py            # Database inspection utility (development tool)
 ├── pyproject.toml       # Project metadata and dependencies
 ├── .env                 # API keys and configuration (not committed)
-└── sandbox/             # Working directory for agent file operations
+├── sandbox/             # Working directory for agent file operations
+└── tests/
+    ├── conftest.py      # Shared fixtures (mock LLMs, sandbox, sample PDF)
+    └── test_tools_unit.py  # Unit tests for all tools in sidekick_tools.py
 ```
 
 ### Key files
