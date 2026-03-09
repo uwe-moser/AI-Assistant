@@ -6,6 +6,9 @@ It maintains persistent memory across sessions: it remembers facts about you and
 
 ---
 
+![Screenshot of the application](assets/ApexFlowScreenShot.png)
+
+---
 ## What it can do
 
 ### Web & Internet
