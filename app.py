@@ -2,6 +2,7 @@ import base64
 import gradio as gr
 from sidekick import Sidekick
 from session_manager import SessionManager
+from scheduler import _list_tasks, _remove_task
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -98,6 +99,30 @@ def free_resources(sidekick):
         print(f"Exception during cleanup: {e}")
 
 
+def load_scheduled_tasks():
+    """Load scheduled tasks into a Dataframe-friendly list of rows."""
+    tasks = _list_tasks()
+    rows = []
+    for t in tasks:
+        rows.append([
+            t["id"],
+            t["description"],
+            t["cron_expr"],
+            "enabled" if t["enabled"] else "disabled",
+            t["last_run"] or "never",
+            "yes" if t["notify"] else "no",
+        ])
+    return rows
+
+
+def cancel_task_and_refresh(task_id):
+    """Cancel a task by ID and return updated table rows."""
+    task_id = task_id.strip()
+    if task_id:
+        _remove_task(task_id)
+    return load_scheduled_tasks(), ""
+
+
 with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) as ui:
     gr.HTML(f"""
 <div style="display: flex; align-items: center; gap: 24px; margin-bottom: 4px; width: 100%;">
@@ -181,6 +206,7 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
       <div style="display: flex; flex-wrap: wrap; gap: 5px;">
         <span class="cap-chip">🐍 Python Execution<span class="cap-tip">Run Python code to perform calculations or process data</span></span>
         <span class="cap-chip">🔔 Push Notifications<span class="cap-tip">Send push notifications to keep you updated on task progress</span></span>
+        <span class="cap-chip">⏰ Task Scheduling<span class="cap-tip">Schedule recurring background tasks with cron expressions — e.g. "check the news every morning"</span></span>
       </div>
     </div>
 
@@ -210,6 +236,19 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
                     placeholder="Rename session…",
                 )
                 rename_btn = gr.Button("Rename Session", elem_id="rename-btn")
+
+    # Scheduled Tasks panel
+    with gr.Accordion("Scheduled Tasks", open=False):
+        scheduled_tasks_table = gr.Dataframe(
+            headers=["ID", "Description", "Schedule", "Status", "Last Run", "Notify"],
+            datatype=["str", "str", "str", "str", "str", "str"],
+            interactive=False,
+            label="Background Tasks",
+        )
+        with gr.Row():
+            cancel_task_id = gr.Textbox(label="Task ID to cancel", placeholder="e.g. a1b2c3d4", scale=3)
+            cancel_task_btn = gr.Button("Cancel Task", variant="stop", scale=1)
+            refresh_tasks_btn = gr.Button("Refresh", variant="secondary", scale=1)
 
     # Chat
     with gr.Row():
@@ -278,6 +317,15 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
         reset,
         inputs=[current_session_id, sidekick],
         outputs=[message, success_criteria, chatbot, sidekick],
+    )
+
+    # Scheduled tasks panel wiring
+    ui.load(load_scheduled_tasks, inputs=[], outputs=[scheduled_tasks_table])
+    refresh_tasks_btn.click(load_scheduled_tasks, inputs=[], outputs=[scheduled_tasks_table])
+    cancel_task_btn.click(
+        cancel_task_and_refresh,
+        inputs=[cancel_task_id],
+        outputs=[scheduled_tasks_table, cancel_task_id],
     )
 
 

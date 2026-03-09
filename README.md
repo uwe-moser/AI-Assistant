@@ -31,6 +31,11 @@ It maintains persistent memory across sessions: it remembers facts about you and
 ### Code & Computation
 - **Python execution** — run sandboxed Python code for calculations, data processing, or scripting
 
+### Task Scheduling
+- **Schedule tasks** — set up recurring background jobs with cron expressions (e.g. "check the news every morning at 8 AM")
+- **List & cancel tasks** — view all scheduled tasks with their status and last results, or cancel them by ID
+- **Push notification integration** — optionally get notified via Pushover when a scheduled task produces results
+
 ### Notifications
 - **Push notifications** — send alerts to your phone via Pushover when a long-running task completes
 
@@ -182,6 +187,7 @@ AI-Assistant/
 ├── app.py               # Gradio web UI and application entry point
 ├── sidekick.py          # Core agent: worker, evaluator, LangGraph state machine
 ├── sidekick_tools.py    # Tool integrations (browser, search, files, code, notifications)
+├── scheduler.py         # Task scheduling: SQLite-backed cron tasks with APScheduler
 ├── session_manager.py   # SQLite-backed session creation, listing, and renaming
 ├── user_profile.py      # Persistent key-value store for user facts
 ├── readdb.py            # Database inspection utility (development tool)
@@ -199,7 +205,8 @@ AI-Assistant/
 |---|---|
 | [app.py](app.py) | Launches the Gradio interface, wires UI events, manages the agent lifecycle |
 | [sidekick.py](sidekick.py) | Defines the `Sidekick` class, LangGraph state machine (3-node graph), worker and evaluator nodes, user profile extraction, and persistent memory |
-| [sidekick_tools.py](sidekick_tools.py) | Registers all tools: Playwright browser automation, Google Serper search, file I/O (sandbox), Python REPL, Wikipedia, arXiv, YouTube transcripts, PDF read/create, Pushover notifications, CSV/Excel read/write, PNG chart generation |
+| [sidekick_tools.py](sidekick_tools.py) | Registers all tools: Playwright browser automation, Google Serper search, file I/O (sandbox), Python REPL, Wikipedia, arXiv, YouTube transcripts, PDF read/create, Pushover notifications, CSV/Excel read/write, PNG chart generation, task scheduling |
+| [scheduler.py](scheduler.py) | SQLite-backed task scheduling with cron expressions; persists tasks, validates cron, tracks results |
 | [session_manager.py](session_manager.py) | Creates, lists, and renames named sessions backed by SQLite |
 | [user_profile.py](user_profile.py) | Stores and retrieves persistent facts about the user across sessions |
 | [readdb.py](readdb.py) | Reads and displays contents of the chat history and checkpoint databases (for debugging) |
@@ -218,6 +225,7 @@ AI-Assistant/
 | Document processing | pypdf (reading), fpdf2 (creation) |
 | Structured data | openpyxl (Excel), csv (CSV), matplotlib (charts) |
 | Media | youtube-transcript-api |
+| Task scheduling | [APScheduler](https://apscheduler.readthedocs.io/) with SQLite persistence |
 | Notifications | [Pushover](https://pushover.net/) |
 | Persistence | SQLite (sessions, chat history, user profile, checkpoints) |
 | Code execution | LangChain PythonREPLTool (sandboxed) |

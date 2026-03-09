@@ -6,7 +6,7 @@ import json
 import csv
 import io
 import requests
-from langchain_core.tools import Tool
+from langchain_core.tools import Tool, StructuredTool
 from langchain_community.agent_toolkits import FileManagementToolkit
 from langchain_community.tools.wikipedia.tool import WikipediaQueryRun
 from langchain_experimental.tools import PythonREPLTool
@@ -21,6 +21,7 @@ import openpyxl
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from scheduler import schedule_task, list_scheduled_tasks, cancel_scheduled_task
 
 
 
@@ -411,5 +412,26 @@ async def other_tools():
         ),
     )
 
-    return file_tools + [push_tool, tool_search, python_repl, wiki_tool, arxiv_tool, pdf_tool, youtube_tool, create_pdf_tool, read_spreadsheet_tool, write_spreadsheet_tool, chart_data_tool]
+    schedule_task_tool = StructuredTool.from_function(
+        func=schedule_task,
+        name="schedule_task",
+        description=(
+            "Schedule a recurring background task with a cron expression. "
+            "Example: description='Check BBC News for tech headlines', cron='0 8 * * *', notify=True"
+        ),
+    )
+
+    list_tasks_tool = StructuredTool.from_function(
+        func=list_scheduled_tasks,
+        name="list_scheduled_tasks",
+        description="List all scheduled background tasks with their status, schedule, and last results.",
+    )
+
+    cancel_task_tool = StructuredTool.from_function(
+        func=cancel_scheduled_task,
+        name="cancel_scheduled_task",
+        description="Cancel and remove a scheduled task by its ID (e.g. 'a1b2c3d4').",
+    )
+
+    return file_tools + [push_tool, tool_search, python_repl, wiki_tool, arxiv_tool, pdf_tool, youtube_tool, create_pdf_tool, read_spreadsheet_tool, write_spreadsheet_tool, chart_data_tool, schedule_task_tool, list_tasks_tool, cancel_task_tool]
 

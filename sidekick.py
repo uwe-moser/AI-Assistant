@@ -135,6 +135,9 @@ Assistant replied: {assistant_reply[:500]}"""
     - Spreadsheet reader: Read CSV or Excel files from the sandbox and get a summary with columns and data rows.
     - Spreadsheet writer: Create CSV or Excel files in the sandbox from structured data (headers + rows).
     - Chart generator: Create PNG charts (bar, line, pie, scatter) from data and save to the sandbox.
+    - Task scheduler: Schedule recurring background tasks with cron expressions (e.g. "check news every morning"). Pass a JSON string with 'description', 'cron', and optional 'notify'.
+    - List scheduled tasks: View all scheduled tasks with their status, schedule, and last results.
+    - Cancel scheduled task: Remove a scheduled task by its ID.
 
     This is the success criteria:
     {state["success_criteria"]}

@@ -149,12 +149,12 @@ _Nothing currently in progress._
 
 **Goal:** Let the agent run tasks on a schedule or in the background — e.g. "check the news every morning" or "monitor this webpage for changes".
 
-- [ ] Implement a `schedule_task` tool that persists a task + cron expression to SQLite
-- [ ] Add a lightweight scheduler (e.g. `APScheduler`) that runs persisted tasks and stores results
-- [ ] Combine with push notifications to alert on results
-- [ ] Add a UI panel to view/cancel scheduled tasks
+- [x] Implement a `schedule_task` tool that persists a task + cron expression to SQLite
+- [x] Add a lightweight scheduler (e.g. `APScheduler`) that runs persisted tasks and stores results
+- [x] Combine with push notifications to alert on results
+- [x] Add a UI panel to view/cancel scheduled tasks
 
-**Files affected:** [sidekick_tools.py](sidekick_tools.py), [app.py](app.py), new `scheduler.py`
+**Files affected:** [sidekick_tools.py](sidekick_tools.py), [app.py](app.py), new [scheduler.py](scheduler.py)
 
 ---
 
