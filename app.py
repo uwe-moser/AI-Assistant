@@ -160,6 +160,15 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
     </div>
 
     <div>
+      <div class="cap-cat-label" style="font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Structured Data</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 5px;">
+        <span class="cap-chip">📊 Spreadsheet Reader<span class="cap-tip">Read CSV and Excel files from the sandbox — get column names, row count, and a data preview</span></span>
+        <span class="cap-chip">📋 Spreadsheet Writer<span class="cap-tip">Create CSV or Excel files in the sandbox from structured data (headers + rows)</span></span>
+        <span class="cap-chip">📈 Chart Generator<span class="cap-tip">Generate PNG bar, line, pie, or scatter charts from any dataset and save to the sandbox</span></span>
+      </div>
+    </div>
+
+    <div>
       <div class="cap-cat-label" style="font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Research</div>
       <div style="display: flex; flex-wrap: wrap; gap: 5px;">
         <span class="cap-chip">📖 Wikipedia<span class="cap-tip">Retrieve information from Wikipedia for general knowledge queries</span></span>

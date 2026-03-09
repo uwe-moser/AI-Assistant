@@ -23,6 +23,11 @@ It maintains persistent memory across sessions: it remembers facts about you and
 - **PDF reader** — extract and analyse text from PDF files (page-by-page extraction)
 - **PDF creator** — generate properly formatted PDF files with Unicode font support
 
+### Structured Data
+- **Spreadsheet reader** — read CSV and Excel (.xlsx) files from the sandbox; returns column names, row count, and a data preview
+- **Spreadsheet writer** — create CSV or Excel files in the sandbox from structured data (headers + rows)
+- **Chart generator** — produce PNG bar, line, pie, or scatter charts from any dataset via matplotlib
+
 ### Code & Computation
 - **Python execution** — run sandboxed Python code for calculations, data processing, or scripting
 
@@ -194,7 +199,7 @@ AI-Assistant/
 |---|---|
 | [app.py](app.py) | Launches the Gradio interface, wires UI events, manages the agent lifecycle |
 | [sidekick.py](sidekick.py) | Defines the `Sidekick` class, LangGraph state machine (3-node graph), worker and evaluator nodes, user profile extraction, and persistent memory |
-| [sidekick_tools.py](sidekick_tools.py) | Registers all tools: Playwright browser automation, Google Serper search, file I/O (sandbox), Python REPL, Wikipedia, arXiv, YouTube transcripts, PDF read/create, Pushover notifications |
+| [sidekick_tools.py](sidekick_tools.py) | Registers all tools: Playwright browser automation, Google Serper search, file I/O (sandbox), Python REPL, Wikipedia, arXiv, YouTube transcripts, PDF read/create, Pushover notifications, CSV/Excel read/write, PNG chart generation |
 | [session_manager.py](session_manager.py) | Creates, lists, and renames named sessions backed by SQLite |
 | [user_profile.py](user_profile.py) | Stores and retrieves persistent facts about the user across sessions |
 | [readdb.py](readdb.py) | Reads and displays contents of the chat history and checkpoint databases (for debugging) |
@@ -211,6 +216,7 @@ AI-Assistant/
 | UI | [Gradio](https://www.gradio.app/) |
 | Search | Google Serper, Wikipedia, arXiv |
 | Document processing | pypdf (reading), fpdf2 (creation) |
+| Structured data | openpyxl (Excel), csv (CSV), matplotlib (charts) |
 | Media | youtube-transcript-api |
 | Notifications | [Pushover](https://pushover.net/) |
 | Persistence | SQLite (sessions, chat history, user profile, checkpoints) |

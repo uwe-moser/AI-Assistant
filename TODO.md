@@ -136,10 +136,10 @@ _Nothing currently in progress._
 
 **Goal:** Let the agent work with CSV, Excel, and JSON data natively — analyse, transform, chart, and export.
 
-- [ ] Implement `read_spreadsheet` tool (CSV + Excel via `openpyxl`) that returns data as a table summary
-- [ ] Implement `write_spreadsheet` tool (create CSV/Excel files in sandbox)
-- [ ] Implement `chart_data` tool that generates PNG charts via `matplotlib` and saves to sandbox
-- [ ] The Python REPL can already do this, but dedicated tools give the LLM clearer affordances and reduce prompt engineering
+- [x] Implement `read_spreadsheet` tool (CSV + Excel via `openpyxl`) that returns data as a table summary
+- [x] Implement `write_spreadsheet` tool (create CSV/Excel files in sandbox)
+- [x] Implement `chart_data` tool that generates PNG charts via `matplotlib` and saves to sandbox
+- [x] The Python REPL can already do this, but dedicated tools give the LLM clearer affordances and reduce prompt engineering
 
 **Files affected:** [sidekick_tools.py](sidekick_tools.py), [pyproject.toml](pyproject.toml)
 
