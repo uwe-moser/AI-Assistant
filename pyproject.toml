@@ -48,4 +48,19 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ipykernel>=6.29.5",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-mock>=3.14.0",
+    "pytest-cov>=6.0",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests that hit real APIs or take >5s",
+]
+
+[tool.coverage.run]
+source = ["sidekick_tools", "sidekick", "session_manager", "user_profile"]
+omit = ["tests/*"]
