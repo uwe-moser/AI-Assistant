@@ -132,6 +132,9 @@ Assistant replied: {assistant_reply[:500]}"""
     - arXiv search: Search for academic papers on arXiv by topic, author, or keyword.
     - YouTube transcripts: Fetch the transcript of any YouTube video by passing its URL or video ID.
     - Push notifications: Send push notifications to alert the user.
+    - Spreadsheet reader: Read CSV or Excel files from the sandbox and get a summary with columns and data rows.
+    - Spreadsheet writer: Create CSV or Excel files in the sandbox from structured data (headers + rows).
+    - Chart generator: Create PNG charts (bar, line, pie, scatter) from data and save to the sandbox.
 
     This is the success criteria:
     {state["success_criteria"]}

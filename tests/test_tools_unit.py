@@ -18,6 +18,22 @@ import pytest
 _real_path_join = os.path.join
 
 
+# ---------------------------------------------------------------------------
+# Fixture: sandbox directory with cwd pointing at its parent.
+# Patching os.path.join globally bleeds into third-party libs (openpyxl,
+# matplotlib), so for tools that call those libs we change the working
+# directory instead and let the relative "sandbox/" path resolve naturally.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def sandbox_cwd(tmp_path, monkeypatch):
+    """Create a sandbox/ subdir and chdir into its parent so relative
+    sandbox/ paths in the tool functions resolve to the temp directory."""
+    (tmp_path / "sandbox").mkdir()
+    monkeypatch.chdir(tmp_path)
+    return tmp_path / "sandbox"
+
+
 # ===================================================================
 # PDF — read_pdf
 # ===================================================================
@@ -484,6 +500,7 @@ class TestOtherToolsAssembly:
                 "send_push_notification", "search", "Python_REPL",
                 "wikipedia", "arxiv", "read_pdf",
                 "get_youtube_transcript", "create_pdf",
+                "read_spreadsheet", "write_spreadsheet", "chart_data",
             }
             missing = expected - names
             assert not missing, f"Missing tools: {missing}"
@@ -507,3 +524,278 @@ class TestOtherToolsAssembly:
                 has_invoke = hasattr(tool, "invoke") and callable(tool.invoke)
                 assert has_run or has_invoke, \
                     f"Tool '{tool.name}' has neither .run() nor .invoke()"
+
+
+# ===================================================================
+# Spreadsheet — read_spreadsheet
+# ===================================================================
+
+class TestReadSpreadsheet:
+    """Tests for the read_spreadsheet tool."""
+
+    def _join_to(self, sandbox):
+        """Return a side_effect for os.path.join that roots paths in sandbox."""
+        return lambda *a: _real_path_join(sandbox, a[-1])
+
+    def test_file_not_found_returns_error(self):
+        from sidekick_tools import read_spreadsheet
+        result = read_spreadsheet("nonexistent.csv")
+        assert "Error" in result
+        assert "not found" in result
+
+    def test_unsupported_extension_returns_error(self, sandbox):
+        from sidekick_tools import read_spreadsheet
+        # Create a dummy .txt file in the sandbox so it passes the existence check
+        txt_path = _real_path_join(sandbox, "data.txt")
+        open(txt_path, "w").close()
+        with patch("sidekick_tools.os.path.join", side_effect=self._join_to(sandbox)):
+            result = read_spreadsheet("data.txt")
+        assert "Error" in result
+        assert "unsupported" in result
+
+    def test_reads_csv_headers_and_rows(self, sandbox):
+        import csv as _csv
+        from sidekick_tools import read_spreadsheet
+
+        csv_path = _real_path_join(sandbox, "sample.csv")
+        with open(csv_path, "w", newline="") as f:
+            writer = _csv.writer(f)
+            writer.writerow(["Name", "Age", "City"])
+            writer.writerow(["Alice", "30", "NYC"])
+            writer.writerow(["Bob", "25", "LA"])
+
+        with patch("sidekick_tools.os.path.join", side_effect=self._join_to(sandbox)):
+            result = read_spreadsheet("sample.csv")
+
+        assert "Name" in result
+        assert "Age" in result
+        assert "Alice" in result
+        assert "Bob" in result
+        assert "3 rows" in result  # header + 2 data rows
+
+    def test_reads_xlsx_headers_and_rows(self, sandbox_cwd):
+        from sidekick_tools import read_spreadsheet
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["Product", "Price"])
+        ws.append(["Apple", 1.5])
+        ws.append(["Banana", 0.75])
+        wb.save(sandbox_cwd / "sample.xlsx")
+
+        result = read_spreadsheet("sample.xlsx")
+
+        assert "Product" in result
+        assert "Apple" in result
+        assert "3 rows" in result
+
+    def test_large_csv_shows_truncation_note(self, sandbox):
+        import csv as _csv
+        from sidekick_tools import read_spreadsheet
+
+        csv_path = _real_path_join(sandbox, "big.csv")
+        with open(csv_path, "w", newline="") as f:
+            writer = _csv.writer(f)
+            writer.writerow(["id", "value"])
+            for i in range(50):
+                writer.writerow([str(i), str(i * 10)])
+
+        with patch("sidekick_tools.os.path.join", side_effect=self._join_to(sandbox)):
+            result = read_spreadsheet("big.csv")
+
+        assert "more rows not shown" in result
+
+    def test_csv_with_utf8_bom(self, sandbox):
+        from sidekick_tools import read_spreadsheet
+
+        csv_path = _real_path_join(sandbox, "bom.csv")
+        with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+            f.write("Name,Value\nAlice,42\n")
+
+        with patch("sidekick_tools.os.path.join", side_effect=self._join_to(sandbox)):
+            result = read_spreadsheet("bom.csv")
+
+        # BOM should be stripped; first column header should be clean
+        assert "Name" in result
+        assert "\ufeffName" not in result
+
+
+# ===================================================================
+# Spreadsheet — write_spreadsheet
+# ===================================================================
+
+class TestWriteSpreadsheet:
+    """Tests for the write_spreadsheet tool."""
+
+    def test_invalid_json_returns_error(self):
+        from sidekick_tools import write_spreadsheet
+        result = write_spreadsheet("{bad json")
+        assert "Error" in result
+
+    def test_unsupported_extension_returns_error(self, sandbox):
+        from sidekick_tools import write_spreadsheet
+        with patch("sidekick_tools.os.path.join",
+                   side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
+            with patch("sidekick_tools.os.makedirs"):
+                result = write_spreadsheet(json.dumps({
+                    "filename": "out.txt",
+                    "headers": ["A"],
+                    "rows": [["1"]],
+                }))
+        assert "Error" in result
+        assert "unsupported" in result
+
+    def test_creates_csv_file(self, sandbox):
+        from sidekick_tools import write_spreadsheet
+
+        with patch("sidekick_tools.os.path.join",
+                   side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
+            with patch("sidekick_tools.os.makedirs"):
+                result = write_spreadsheet(json.dumps({
+                    "filename": "out.csv",
+                    "headers": ["Name", "Score"],
+                    "rows": [["Alice", "95"], ["Bob", "87"]],
+                }))
+
+        assert "successfully" in result.lower()
+        assert os.path.isfile(_real_path_join(sandbox, "out.csv"))
+
+    def test_csv_content_is_correct(self, sandbox):
+        import csv as _csv
+        from sidekick_tools import write_spreadsheet
+
+        with patch("sidekick_tools.os.path.join",
+                   side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
+            with patch("sidekick_tools.os.makedirs"):
+                write_spreadsheet(json.dumps({
+                    "filename": "check.csv",
+                    "headers": ["X", "Y"],
+                    "rows": [["1", "2"], ["3", "4"]],
+                }))
+
+        with open(_real_path_join(sandbox, "check.csv"), newline="") as f:
+            rows = list(_csv.reader(f))
+
+        assert rows[0] == ["X", "Y"]
+        assert rows[1] == ["1", "2"]
+        assert rows[2] == ["3", "4"]
+
+    def test_creates_xlsx_file(self, sandbox):
+        import openpyxl
+        from sidekick_tools import write_spreadsheet
+
+        with patch("sidekick_tools.os.path.join",
+                   side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
+            with patch("sidekick_tools.os.makedirs"):
+                result = write_spreadsheet(json.dumps({
+                    "filename": "out.xlsx",
+                    "headers": ["Col1", "Col2"],
+                    "rows": [[1, 2], [3, 4]],
+                }))
+
+        assert "successfully" in result.lower()
+        path = _real_path_join(sandbox, "out.xlsx")
+        assert os.path.isfile(path)
+
+        wb = openpyxl.load_workbook(path)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        assert rows[0] == ("Col1", "Col2")
+        assert rows[1] == (1, 2)
+
+    def test_row_count_in_success_message(self, sandbox):
+        from sidekick_tools import write_spreadsheet
+
+        with patch("sidekick_tools.os.path.join",
+                   side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
+            with patch("sidekick_tools.os.makedirs"):
+                result = write_spreadsheet(json.dumps({
+                    "filename": "count.csv",
+                    "headers": ["A"],
+                    "rows": [["1"], ["2"], ["3"]],
+                }))
+
+        assert "3 data rows" in result
+
+    def test_no_headers_writes_rows_only(self, sandbox):
+        import csv as _csv
+        from sidekick_tools import write_spreadsheet
+
+        with patch("sidekick_tools.os.path.join",
+                   side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
+            with patch("sidekick_tools.os.makedirs"):
+                write_spreadsheet(json.dumps({
+                    "filename": "noheader.csv",
+                    "headers": [],
+                    "rows": [["a", "b"]],
+                }))
+
+        with open(_real_path_join(sandbox, "noheader.csv"), newline="") as f:
+            rows = list(_csv.reader(f))
+        assert len(rows) == 1
+        assert rows[0] == ["a", "b"]
+
+
+# ===================================================================
+# Chart — chart_data
+# ===================================================================
+
+class TestChartData:
+    """Tests for the chart_data tool."""
+
+    def test_invalid_json_returns_error(self):
+        from sidekick_tools import chart_data
+        result = chart_data("{bad json")
+        assert "Error" in result
+
+    def test_missing_datasets_returns_error(self, sandbox_cwd):
+        from sidekick_tools import chart_data
+        result = chart_data(json.dumps({
+            "filename": "chart.png",
+            "chart_type": "bar",
+            "labels": ["A"],
+            "datasets": [],
+        }))
+        assert "Error" in result
+
+    def _make_chart(self, sandbox_cwd, chart_type, filename="chart.png"):
+        from sidekick_tools import chart_data
+        payload = json.dumps({
+            "filename": filename,
+            "chart_type": chart_type,
+            "title": f"Test {chart_type}",
+            "labels": ["Jan", "Feb", "Mar"],
+            "datasets": [{"label": "Series A", "values": [10, 20, 15]}],
+        })
+        return chart_data(payload)
+
+    @pytest.mark.parametrize("chart_type", ["bar", "line", "pie", "scatter"])
+    def test_all_chart_types_succeed(self, sandbox_cwd, chart_type):
+        result = self._make_chart(sandbox_cwd, chart_type, filename=f"{chart_type}.png")
+        assert "successfully" in result.lower()
+        assert (sandbox_cwd / f"{chart_type}.png").is_file()
+
+    def test_output_is_valid_png(self, sandbox_cwd):
+        """The saved file should start with the PNG magic bytes."""
+        self._make_chart(sandbox_cwd, "bar", filename="valid.png")
+        with open(sandbox_cwd / "valid.png", "rb") as f:
+            header = f.read(8)
+        assert header[:4] == b"\x89PNG"
+
+    def test_multiple_datasets_bar_chart(self, sandbox_cwd):
+        from sidekick_tools import chart_data
+        result = chart_data(json.dumps({
+            "filename": "multi.png",
+            "chart_type": "bar",
+            "labels": ["Q1", "Q2"],
+            "datasets": [
+                {"label": "Revenue", "values": [100, 200]},
+                {"label": "Cost",    "values": [80, 120]},
+            ],
+        }))
+        assert "successfully" in result.lower()
+
+    def test_returns_correct_sandbox_path_in_message(self, sandbox_cwd):
+        result = self._make_chart(sandbox_cwd, "line", filename="myline.png")
+        assert "sandbox/myline.png" in result
