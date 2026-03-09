@@ -147,7 +147,7 @@ _Nothing currently in progress._
 
 ### 8. Task Scheduling & Background Jobs
 
-**Goal:** Let the agent run tasks on a schedule or in the background — e.g. "check this stock price every morning" or "monitor this webpage for changes".
+**Goal:** Let the agent run tasks on a schedule or in the background — e.g. "check the news every morning" or "monitor this webpage for changes".
 
 - [ ] Implement a `schedule_task` tool that persists a task + cron expression to SQLite
 - [ ] Add a lightweight scheduler (e.g. `APScheduler`) that runs persisted tasks and stores results
