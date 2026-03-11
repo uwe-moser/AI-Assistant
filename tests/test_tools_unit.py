@@ -154,51 +154,53 @@ class TestCreatePdf:
         assert "successfully" in result.lower()
 
     def test_unicode_content_does_not_crash(self, sandbox):
-        """Smart quotes and dashes should be sanitized when no TTF font."""
+        """Unicode characters (smart quotes, dashes, emoji) should render fine."""
         from sidekick_tools import create_pdf
 
         with patch("sidekick_tools.os.path.join",
                     side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
             with patch("sidekick_tools.os.makedirs"):
-                with patch("sidekick_tools.os.path.exists", return_value=False):
-                    result = create_pdf(json.dumps({
-                        "filename": "unicode.pdf",
-                        "content": "\u201cHello\u201d \u2014 world\u2026",
-                    }))
+                result = create_pdf(json.dumps({
+                    "filename": "unicode.pdf",
+                    "content": "\u201cHello\u201d \u2014 world\u2026 \U0001f600",
+                }))
 
         assert "successfully" in result.lower()
 
 
 # ===================================================================
-# PDF — _sanitize_for_pdf
+# PDF — _content_to_html helper
 # ===================================================================
 
-class TestSanitizeForPdf:
-    """Tests for the _sanitize_for_pdf helper."""
+class TestContentToHtml:
+    """Tests for the _content_to_html helper."""
 
-    def test_replaces_smart_quotes(self):
-        from sidekick_tools import _sanitize_for_pdf
-        assert _sanitize_for_pdf("\u201cHi\u201d") == '"Hi"'
+    def test_title_becomes_h1(self):
+        from sidekick_tools import _content_to_html
+        html = _content_to_html("My Title", "body text")
+        assert "<h1>My Title</h1>" in html
 
-    def test_replaces_dashes(self):
-        from sidekick_tools import _sanitize_for_pdf
-        assert _sanitize_for_pdf("a\u2014b\u2013c") == "a--b-c"
+    def test_no_title_omits_h1(self):
+        from sidekick_tools import _content_to_html
+        html = _content_to_html("", "body text")
+        assert "<h1>" not in html
 
-    def test_replaces_ellipsis(self):
-        from sidekick_tools import _sanitize_for_pdf
-        assert _sanitize_for_pdf("wait\u2026") == "wait..."
+    def test_html_entities_escaped(self):
+        from sidekick_tools import _content_to_html
+        html = _content_to_html("", "a < b & c > d")
+        assert "&lt;" in html
+        assert "&amp;" in html
+        assert "&gt;" in html
 
-    def test_replaces_bullet(self):
-        from sidekick_tools import _sanitize_for_pdf
-        assert _sanitize_for_pdf("\u2022 item") == "- item"
+    def test_bold_markdown_converted(self):
+        from sidekick_tools import _content_to_html
+        html = _content_to_html("", "**bold text**")
+        assert "<strong>bold text</strong>" in html
 
-    def test_strips_zero_width_space(self):
-        from sidekick_tools import _sanitize_for_pdf
-        assert _sanitize_for_pdf("a\u200bb") == "ab"
-
-    def test_plain_ascii_unchanged(self):
-        from sidekick_tools import _sanitize_for_pdf
-        assert _sanitize_for_pdf("Hello World 123") == "Hello World 123"
+    def test_empty_lines_produce_br(self):
+        from sidekick_tools import _content_to_html
+        html = _content_to_html("", "line1\n\nline2")
+        assert "<br>" in html
 
 
 # ===================================================================

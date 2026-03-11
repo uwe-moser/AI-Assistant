@@ -16,7 +16,10 @@ from langchain_community.tools.arxiv.tool import ArxivQueryRun
 from langchain_community.utilities.arxiv import ArxivAPIWrapper
 from pypdf import PdfReader
 from youtube_transcript_api import YouTubeTranscriptApi
-from fpdf import FPDF
+import html as html_module
+import subprocess
+import sys
+import tempfile
 import openpyxl
 import matplotlib
 matplotlib.use("Agg")
@@ -65,23 +68,36 @@ def read_pdf(file_path: str) -> str:
     return "\n\n".join(pages)
 
 
-def _sanitize_for_pdf(text: str) -> str:
-    """Replace Unicode characters that cause issues with built-in PDF fonts."""
-    replacements = {
-        "\u2014": "--",   # em-dash
-        "\u2013": "-",    # en-dash
-        "\u2018": "'",    # left single quote
-        "\u2019": "'",    # right single quote
-        "\u201c": '"',    # left double quote
-        "\u201d": '"',    # right double quote
-        "\u2026": "...",  # ellipsis
-        "\u2022": "-",    # bullet
-        "\u00a0": " ",    # non-breaking space
-        "\u200b": "",     # zero-width space
-    }
-    for char, repl in replacements.items():
-        text = text.replace(char, repl)
-    return text
+def _content_to_html(title: str, content: str) -> str:
+    """Convert title + plain-text content into a styled HTML document."""
+    escaped_title = html_module.escape(title)
+
+    # Convert each line: escape HTML, then apply lightweight markdown-style formatting
+    body_lines = []
+    for line in content.split("\n"):
+        if not line.strip():
+            body_lines.append("<br>")
+            continue
+        safe = html_module.escape(line)
+        # Bold: **text**
+        import re
+        safe = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe)
+        # Bullet lines
+        if re.match(r"^\s*[-*]\s", safe):
+            safe = re.sub(r"^\s*[-*]\s", "• ", safe)
+        body_lines.append(f"<p style='margin:2px 0'>{safe}</p>")
+
+    body_html = "\n".join(body_lines)
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  body {{ font-family: -apple-system, Arial, Helvetica, sans-serif; margin: 0; padding: 40px;
+         font-size: 11pt; line-height: 1.6; color: #222; }}
+  h1 {{ font-size: 18pt; margin: 0 0 16px 0; }}
+</style></head><body>
+{"<h1>" + escaped_title + "</h1>" if title else ""}
+{body_html}
+</body></html>"""
 
 
 def create_pdf(input: str) -> str:
@@ -89,7 +105,6 @@ def create_pdf(input: str) -> str:
     Input must be a JSON string with keys: 'filename', 'title' (optional), 'content'.
     Example: {"filename": "report.pdf", "title": "My Report", "content": "Text here..."}
     """
-    import json
     try:
         data = json.loads(input)
     except json.JSONDecodeError as e:
@@ -105,49 +120,46 @@ def create_pdf(input: str) -> str:
     full_path = os.path.join("sandbox", filename)
     os.makedirs("sandbox", exist_ok=True)
 
-    pdf = FPDF()
-    pdf.set_margins(15, 15, 15)
-    pdf.add_page()
+    html_content = _content_to_html(title, content)
 
-    # Try to use a Unicode-capable TTF font, fall back to Helvetica with sanitization
-    unicode_font = False
-    ttf_path = "/Library/Fonts/Arial Unicode.ttf"
-    if os.path.exists(ttf_path):
+    # Write HTML to a temp file, then use Playwright/Chromium to print to PDF.
+    # We run Playwright in a subprocess to avoid async-loop conflicts.
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w", encoding="utf-8") as tmp:
+            tmp.write(html_content)
+            tmp_html_path = tmp.name
+
+        abs_pdf_path = os.path.abspath(full_path)
+        script = (
+            "from playwright.sync_api import sync_playwright\n"
+            "import sys\n"
+            "with sync_playwright() as p:\n"
+            "    browser = p.chromium.launch()\n"
+            "    page = browser.new_page()\n"
+            f"    page.goto('file://{tmp_html_path}')\n"
+            f"    page.pdf(path=r'{abs_pdf_path}', format='A4',"
+            "     margin={'top':'20mm','bottom':'20mm','left':'15mm','right':'15mm'})\n"
+            "    browser.close()\n"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, timeout=120,
+        )
+
+        if result.returncode != 0:
+            return f"Error creating PDF: {result.stderr[-500:]}"
+
+        return f"PDF successfully created at sandbox/{filename}"
+    except subprocess.TimeoutExpired:
+        return "Error: PDF creation timed out after 120 seconds."
+    except Exception as e:
+        return f"Error creating PDF: {e}"
+    finally:
         try:
-            pdf.add_font("ArialUnicode", "", ttf_path)
-            pdf.add_font("ArialUnicode", "B", ttf_path)
-            unicode_font = True
+            os.unlink(tmp_html_path)
         except Exception:
             pass
-
-    if not unicode_font:
-        title = _sanitize_for_pdf(title)
-        content = _sanitize_for_pdf(content)
-
-    font_family = "ArialUnicode" if unicode_font else "Helvetica"
-
-    if title:
-        pdf.set_font(font_family, style="B", size=16)
-        pdf.multi_cell(0, 10, title, align="L")
-        pdf.ln(4)
-
-    pdf.set_font(font_family, size=11)
-    for paragraph in content.split("\n"):
-        if paragraph.strip() == "":
-            pdf.ln(4)
-        else:
-            try:
-                pdf.multi_cell(0, 7, paragraph)
-            except Exception:
-                # Long unbreakable strings (URLs, etc.) can exceed page width;
-                # force-wrap by inserting spaces every 80 chars
-                wrapped = "\n".join(
-                    paragraph[i:i+80] for i in range(0, len(paragraph), 80)
-                )
-                pdf.multi_cell(0, 7, wrapped)
-
-    pdf.output(full_path)
-    return f"PDF successfully created at sandbox/{filename}"
 
 
 def get_youtube_transcript(url_or_id: str) -> str:
