@@ -2,10 +2,12 @@ import base64
 import gradio as gr
 from sidekick import Sidekick
 from session_manager import SessionManager
+from scheduler import _list_tasks, _remove_task, TaskRunner
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import HumanMessage, AIMessage
 
 session_manager = SessionManager()
+task_runner = TaskRunner()
 
 with open("ApexFlow.png", "rb") as _f:
     _logo_b64 = base64.b64encode(_f.read()).decode()
@@ -30,6 +32,7 @@ def get_history_for_session(session_id):
 
 
 async def initial_setup():
+    await task_runner.start()
     session_id = session_manager.get_or_create_latest()
     sidekick = Sidekick(session_id=session_id)
     await sidekick.setup()
@@ -48,7 +51,7 @@ async def initial_setup():
 
 async def process_message(sidekick, message, success_criteria, history):
     async for updated_history in sidekick.run_superstep(message, success_criteria, history):
-        yield updated_history, sidekick, ""
+        yield updated_history, sidekick, "", load_scheduled_tasks()
 
 
 async def switch_session(session_id, old_sidekick):
@@ -96,6 +99,30 @@ def free_resources(sidekick):
             sidekick.cleanup()
     except Exception as e:
         print(f"Exception during cleanup: {e}")
+
+
+def load_scheduled_tasks():
+    """Load scheduled tasks into a Dataframe-friendly list of rows."""
+    tasks = _list_tasks()
+    rows = []
+    for t in tasks:
+        rows.append([
+            t["id"],
+            t["description"],
+            t["cron_expr"],
+            "enabled" if t["enabled"] else "disabled",
+            t["last_run"] or "never",
+            "yes" if t["notify"] else "no",
+        ])
+    return rows
+
+
+def cancel_task_and_refresh(task_id):
+    """Cancel a task by ID and return updated table rows."""
+    task_id = task_id.strip()
+    if task_id:
+        _remove_task(task_id)
+    return load_scheduled_tasks(), ""
 
 
 with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) as ui:
@@ -181,6 +208,7 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
       <div style="display: flex; flex-wrap: wrap; gap: 5px;">
         <span class="cap-chip">🐍 Python Execution<span class="cap-tip">Run Python code to perform calculations or process data</span></span>
         <span class="cap-chip">🔔 Push Notifications<span class="cap-tip">Send push notifications to keep you updated on task progress</span></span>
+        <span class="cap-chip">⏰ Task Scheduling<span class="cap-tip">Schedule recurring background tasks with cron expressions — e.g. "check the news every morning"</span></span>
       </div>
     </div>
 
@@ -210,6 +238,19 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
                     placeholder="Rename session…",
                 )
                 rename_btn = gr.Button("Rename Session", elem_id="rename-btn")
+
+    # Scheduled Tasks panel
+    with gr.Accordion("Scheduled Tasks", open=False):
+        scheduled_tasks_table = gr.Dataframe(
+            headers=["ID", "Description", "Schedule", "Status", "Last Run", "Notify"],
+            datatype=["str", "str", "str", "str", "str", "str"],
+            interactive=False,
+            label="Background Tasks",
+        )
+        with gr.Row():
+            cancel_task_id = gr.Textbox(label="Task ID to cancel", placeholder="e.g. a1b2c3d4", scale=3)
+            cancel_task_btn = gr.Button("Cancel Task", variant="stop", scale=1)
+            refresh_tasks_btn = gr.Button("Refresh", variant="secondary", scale=1)
 
     # Chat
     with gr.Row():
@@ -262,22 +303,31 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
     message.submit(
         process_message,
         inputs=[sidekick, message, success_criteria, chatbot],
-        outputs=[chatbot, sidekick, message],
+        outputs=[chatbot, sidekick, message, scheduled_tasks_table],
     )
     success_criteria.submit(
         process_message,
         inputs=[sidekick, message, success_criteria, chatbot],
-        outputs=[chatbot, sidekick, message],
+        outputs=[chatbot, sidekick, message, scheduled_tasks_table],
     )
     go_button.click(
         process_message,
         inputs=[sidekick, message, success_criteria, chatbot],
-        outputs=[chatbot, sidekick, message],
+        outputs=[chatbot, sidekick, message, scheduled_tasks_table],
     )
     reset_button.click(
         reset,
         inputs=[current_session_id, sidekick],
         outputs=[message, success_criteria, chatbot, sidekick],
+    )
+
+    # Scheduled tasks panel wiring
+    ui.load(load_scheduled_tasks, inputs=[], outputs=[scheduled_tasks_table])
+    refresh_tasks_btn.click(load_scheduled_tasks, inputs=[], outputs=[scheduled_tasks_table])
+    cancel_task_btn.click(
+        cancel_task_and_refresh,
+        inputs=[cancel_task_id],
+        outputs=[scheduled_tasks_table, cancel_task_id],
     )
 
 

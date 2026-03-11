@@ -6,7 +6,7 @@ import json
 import csv
 import io
 import requests
-from langchain_core.tools import Tool
+from langchain_core.tools import Tool, StructuredTool
 from langchain_community.agent_toolkits import FileManagementToolkit
 from langchain_community.tools.wikipedia.tool import WikipediaQueryRun
 from langchain_experimental.tools import PythonREPLTool
@@ -16,11 +16,17 @@ from langchain_community.tools.arxiv.tool import ArxivQueryRun
 from langchain_community.utilities.arxiv import ArxivAPIWrapper
 from pypdf import PdfReader
 from youtube_transcript_api import YouTubeTranscriptApi
+import html as html_module
+import re
+import subprocess
+import sys
+import tempfile
 from fpdf import FPDF
 import openpyxl
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from scheduler import schedule_task, list_scheduled_tasks, cancel_scheduled_task
 
 
 
@@ -64,23 +70,111 @@ def read_pdf(file_path: str) -> str:
     return "\n\n".join(pages)
 
 
-def _sanitize_for_pdf(text: str) -> str:
-    """Replace Unicode characters that cause issues with built-in PDF fonts."""
+def _content_to_html(title: str, content: str) -> str:
+    """Convert title + plain-text content into a styled HTML document."""
+    escaped_title = html_module.escape(title)
+
+    body_lines = []
+    for line in content.split("\n"):
+        if not line.strip():
+            body_lines.append("<br>")
+            continue
+        safe = html_module.escape(line)
+        safe = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe)
+        if re.match(r"^\s*[-*]\s", safe):
+            safe = re.sub(r"^\s*[-*]\s", "• ", safe)
+        body_lines.append(f"<p style='margin:2px 0'>{safe}</p>")
+
+    body_html = "\n".join(body_lines)
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+  body {{ font-family: -apple-system, Arial, Helvetica, sans-serif; margin: 0; padding: 40px;
+         font-size: 11pt; line-height: 1.6; color: #222; }}
+  h1 {{ font-size: 18pt; margin: 0 0 16px 0; }}
+</style></head><body>
+{"<h1>" + escaped_title + "</h1>" if title else ""}
+{body_html}
+</body></html>"""
+
+
+def _create_pdf_playwright(html_content: str, full_path: str) -> str | None:
+    """Try to create a PDF using Playwright/Chromium. Returns error string or None on success."""
+    tmp_html_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w", encoding="utf-8") as tmp:
+            tmp.write(html_content)
+            tmp_html_path = tmp.name
+
+        abs_pdf_path = os.path.abspath(full_path)
+        script = (
+            "from playwright.sync_api import sync_playwright\n"
+            "with sync_playwright() as p:\n"
+            "    browser = p.chromium.launch()\n"
+            "    page = browser.new_page()\n"
+            f"    page.goto('file://{tmp_html_path}')\n"
+            f"    page.pdf(path=r'{abs_pdf_path}', format='A4',"
+            "     margin={'top':'20mm','bottom':'20mm','left':'15mm','right':'15mm'})\n"
+            "    browser.close()\n"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, timeout=120,
+        )
+
+        if result.returncode != 0:
+            return result.stderr[-500:]
+        return None  # success
+    except Exception as e:
+        return str(e)
+    finally:
+        if tmp_html_path:
+            try:
+                os.unlink(tmp_html_path)
+            except Exception:
+                pass
+
+
+def _sanitize_for_fpdf(text: str) -> str:
+    """Replace Unicode characters that cause issues with fpdf built-in fonts."""
     replacements = {
-        "\u2014": "--",   # em-dash
-        "\u2013": "-",    # en-dash
-        "\u2018": "'",    # left single quote
-        "\u2019": "'",    # right single quote
-        "\u201c": '"',    # left double quote
-        "\u201d": '"',    # right double quote
-        "\u2026": "...",  # ellipsis
-        "\u2022": "-",    # bullet
-        "\u00a0": " ",    # non-breaking space
-        "\u200b": "",     # zero-width space
+        "\u2014": "--", "\u2013": "-", "\u2018": "'", "\u2019": "'",
+        "\u201c": '"', "\u201d": '"', "\u2026": "...", "\u2022": "-",
+        "\u00a0": " ", "\u200b": "",
     }
     for char, repl in replacements.items():
         text = text.replace(char, repl)
-    return text
+    # Drop any remaining non-latin1 characters to avoid fpdf crashes
+    return text.encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _create_pdf_fpdf(title: str, content: str, full_path: str) -> str | None:
+    """Create a PDF using fpdf (fallback). Returns error string or None on success."""
+    try:
+        title = _sanitize_for_fpdf(title)
+        content = _sanitize_for_fpdf(content)
+
+        pdf = FPDF()
+        pdf.set_margins(15, 15, 15)
+        pdf.add_page()
+
+        if title:
+            pdf.set_font("Helvetica", style="B", size=16)
+            pdf.multi_cell(0, 10, title, align="L")
+            pdf.ln(4)
+
+        pdf.set_font("Helvetica", size=11)
+        for paragraph in content.split("\n"):
+            if paragraph.strip() == "":
+                pdf.ln(4)
+            else:
+                pdf.multi_cell(0, 7, paragraph)
+
+        pdf.output(full_path)
+        return None  # success
+    except Exception as e:
+        return str(e)
 
 
 def create_pdf(input: str) -> str:
@@ -88,7 +182,6 @@ def create_pdf(input: str) -> str:
     Input must be a JSON string with keys: 'filename', 'title' (optional), 'content'.
     Example: {"filename": "report.pdf", "title": "My Report", "content": "Text here..."}
     """
-    import json
     try:
         data = json.loads(input)
     except json.JSONDecodeError as e:
@@ -104,41 +197,18 @@ def create_pdf(input: str) -> str:
     full_path = os.path.join("sandbox", filename)
     os.makedirs("sandbox", exist_ok=True)
 
-    pdf = FPDF()
-    pdf.set_margins(20, 20, 20)
-    pdf.add_page()
+    # Try Playwright/Chromium first (best quality, full Unicode support)
+    html_content = _content_to_html(title, content)
+    pw_error = _create_pdf_playwright(html_content, full_path)
+    if pw_error is None:
+        return f"PDF successfully created at sandbox/{filename}"
 
-    # Try to use a Unicode-capable TTF font, fall back to Helvetica with sanitization
-    unicode_font = False
-    ttf_path = "/Library/Fonts/Arial Unicode.ttf"
-    if os.path.exists(ttf_path):
-        try:
-            pdf.add_font("ArialUnicode", "", ttf_path)
-            pdf.add_font("ArialUnicode", "B", ttf_path)
-            unicode_font = True
-        except Exception:
-            pass
+    # Fall back to fpdf (works everywhere, limited Unicode)
+    fpdf_error = _create_pdf_fpdf(title, content, full_path)
+    if fpdf_error is None:
+        return f"PDF successfully created at sandbox/{filename}"
 
-    if not unicode_font:
-        title = _sanitize_for_pdf(title)
-        content = _sanitize_for_pdf(content)
-
-    font_family = "ArialUnicode" if unicode_font else "Helvetica"
-
-    if title:
-        pdf.set_font(font_family, style="B", size=16)
-        pdf.multi_cell(0, 10, title, align="L")
-        pdf.ln(4)
-
-    pdf.set_font(font_family, size=11)
-    for paragraph in content.split("\n"):
-        if paragraph.strip() == "":
-            pdf.ln(4)
-        else:
-            pdf.multi_cell(0, 7, paragraph)
-
-    pdf.output(full_path)
-    return f"PDF successfully created at sandbox/{filename}"
+    return f"Error creating PDF: {fpdf_error}"
 
 
 def get_youtube_transcript(url_or_id: str) -> str:
@@ -411,5 +481,26 @@ async def other_tools():
         ),
     )
 
-    return file_tools + [push_tool, tool_search, python_repl, wiki_tool, arxiv_tool, pdf_tool, youtube_tool, create_pdf_tool, read_spreadsheet_tool, write_spreadsheet_tool, chart_data_tool]
+    schedule_task_tool = StructuredTool.from_function(
+        func=schedule_task,
+        name="schedule_task",
+        description=(
+            "Schedule a recurring background task with a cron expression. "
+            "Example: description='Check BBC News for tech headlines', cron='0 8 * * *', notify=True"
+        ),
+    )
+
+    list_tasks_tool = StructuredTool.from_function(
+        func=list_scheduled_tasks,
+        name="list_scheduled_tasks",
+        description="List all scheduled background tasks with their status, schedule, and last results.",
+    )
+
+    cancel_task_tool = StructuredTool.from_function(
+        func=cancel_scheduled_task,
+        name="cancel_scheduled_task",
+        description="Cancel and remove a scheduled task by its ID (e.g. 'a1b2c3d4').",
+    )
+
+    return file_tools + [push_tool, tool_search, python_repl, wiki_tool, arxiv_tool, pdf_tool, youtube_tool, create_pdf_tool, read_spreadsheet_tool, write_spreadsheet_tool, chart_data_tool, schedule_task_tool, list_tasks_tool, cancel_task_tool]
 
