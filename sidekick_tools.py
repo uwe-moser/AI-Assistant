@@ -17,9 +17,11 @@ from langchain_community.utilities.arxiv import ArxivAPIWrapper
 from pypdf import PdfReader
 from youtube_transcript_api import YouTubeTranscriptApi
 import html as html_module
+import re
 import subprocess
 import sys
 import tempfile
+from fpdf import FPDF
 import openpyxl
 import matplotlib
 matplotlib.use("Agg")
@@ -72,17 +74,13 @@ def _content_to_html(title: str, content: str) -> str:
     """Convert title + plain-text content into a styled HTML document."""
     escaped_title = html_module.escape(title)
 
-    # Convert each line: escape HTML, then apply lightweight markdown-style formatting
     body_lines = []
     for line in content.split("\n"):
         if not line.strip():
             body_lines.append("<br>")
             continue
         safe = html_module.escape(line)
-        # Bold: **text**
-        import re
         safe = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe)
-        # Bullet lines
         if re.match(r"^\s*[-*]\s", safe):
             safe = re.sub(r"^\s*[-*]\s", "• ", safe)
         body_lines.append(f"<p style='margin:2px 0'>{safe}</p>")
@@ -98,6 +96,85 @@ def _content_to_html(title: str, content: str) -> str:
 {"<h1>" + escaped_title + "</h1>" if title else ""}
 {body_html}
 </body></html>"""
+
+
+def _create_pdf_playwright(html_content: str, full_path: str) -> str | None:
+    """Try to create a PDF using Playwright/Chromium. Returns error string or None on success."""
+    tmp_html_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w", encoding="utf-8") as tmp:
+            tmp.write(html_content)
+            tmp_html_path = tmp.name
+
+        abs_pdf_path = os.path.abspath(full_path)
+        script = (
+            "from playwright.sync_api import sync_playwright\n"
+            "with sync_playwright() as p:\n"
+            "    browser = p.chromium.launch()\n"
+            "    page = browser.new_page()\n"
+            f"    page.goto('file://{tmp_html_path}')\n"
+            f"    page.pdf(path=r'{abs_pdf_path}', format='A4',"
+            "     margin={'top':'20mm','bottom':'20mm','left':'15mm','right':'15mm'})\n"
+            "    browser.close()\n"
+        )
+
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, timeout=120,
+        )
+
+        if result.returncode != 0:
+            return result.stderr[-500:]
+        return None  # success
+    except Exception as e:
+        return str(e)
+    finally:
+        if tmp_html_path:
+            try:
+                os.unlink(tmp_html_path)
+            except Exception:
+                pass
+
+
+def _sanitize_for_fpdf(text: str) -> str:
+    """Replace Unicode characters that cause issues with fpdf built-in fonts."""
+    replacements = {
+        "\u2014": "--", "\u2013": "-", "\u2018": "'", "\u2019": "'",
+        "\u201c": '"', "\u201d": '"', "\u2026": "...", "\u2022": "-",
+        "\u00a0": " ", "\u200b": "",
+    }
+    for char, repl in replacements.items():
+        text = text.replace(char, repl)
+    # Drop any remaining non-latin1 characters to avoid fpdf crashes
+    return text.encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _create_pdf_fpdf(title: str, content: str, full_path: str) -> str | None:
+    """Create a PDF using fpdf (fallback). Returns error string or None on success."""
+    try:
+        title = _sanitize_for_fpdf(title)
+        content = _sanitize_for_fpdf(content)
+
+        pdf = FPDF()
+        pdf.set_margins(15, 15, 15)
+        pdf.add_page()
+
+        if title:
+            pdf.set_font("Helvetica", style="B", size=16)
+            pdf.multi_cell(0, 10, title, align="L")
+            pdf.ln(4)
+
+        pdf.set_font("Helvetica", size=11)
+        for paragraph in content.split("\n"):
+            if paragraph.strip() == "":
+                pdf.ln(4)
+            else:
+                pdf.multi_cell(0, 7, paragraph)
+
+        pdf.output(full_path)
+        return None  # success
+    except Exception as e:
+        return str(e)
 
 
 def create_pdf(input: str) -> str:
@@ -120,46 +197,18 @@ def create_pdf(input: str) -> str:
     full_path = os.path.join("sandbox", filename)
     os.makedirs("sandbox", exist_ok=True)
 
+    # Try Playwright/Chromium first (best quality, full Unicode support)
     html_content = _content_to_html(title, content)
-
-    # Write HTML to a temp file, then use Playwright/Chromium to print to PDF.
-    # We run Playwright in a subprocess to avoid async-loop conflicts.
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w", encoding="utf-8") as tmp:
-            tmp.write(html_content)
-            tmp_html_path = tmp.name
-
-        abs_pdf_path = os.path.abspath(full_path)
-        script = (
-            "from playwright.sync_api import sync_playwright\n"
-            "import sys\n"
-            "with sync_playwright() as p:\n"
-            "    browser = p.chromium.launch()\n"
-            "    page = browser.new_page()\n"
-            f"    page.goto('file://{tmp_html_path}')\n"
-            f"    page.pdf(path=r'{abs_pdf_path}', format='A4',"
-            "     margin={'top':'20mm','bottom':'20mm','left':'15mm','right':'15mm'})\n"
-            "    browser.close()\n"
-        )
-
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            capture_output=True, text=True, timeout=120,
-        )
-
-        if result.returncode != 0:
-            return f"Error creating PDF: {result.stderr[-500:]}"
-
+    pw_error = _create_pdf_playwright(html_content, full_path)
+    if pw_error is None:
         return f"PDF successfully created at sandbox/{filename}"
-    except subprocess.TimeoutExpired:
-        return "Error: PDF creation timed out after 120 seconds."
-    except Exception as e:
-        return f"Error creating PDF: {e}"
-    finally:
-        try:
-            os.unlink(tmp_html_path)
-        except Exception:
-            pass
+
+    # Fall back to fpdf (works everywhere, limited Unicode)
+    fpdf_error = _create_pdf_fpdf(title, content, full_path)
+    if fpdf_error is None:
+        return f"PDF successfully created at sandbox/{filename}"
+
+    return f"Error creating PDF: {fpdf_error}"
 
 
 def get_youtube_transcript(url_or_id: str) -> str:
