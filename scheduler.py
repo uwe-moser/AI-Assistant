@@ -210,10 +210,22 @@ async def _execute_task(task_id: str):
         sidekick = Sidekick(session_id=session_id)
         await sidekick.setup()
 
+        execution_prompt = (
+            f"This is an automated scheduled task execution. "
+            f"Do NOT schedule or reschedule anything — the task is already scheduled. "
+            f"Your job is to EXECUTE the following task RIGHT NOW by using your tools "
+            f"(web search, file writing, PDF creation, etc.):\n\n"
+            f"{task['description']}"
+        )
+        success_criteria = (
+            "The task must be fully executed — not planned, not scheduled, but actually done. "
+            "All files mentioned must be created. Provide a concise summary of what was done."
+        )
+
         result_text = ""
         async for _ in sidekick.run_superstep(
-            task["description"],
-            "Complete the task described. Provide a concise result.",
+            execution_prompt,
+            success_criteria,
             [],
         ):
             pass  # consume the generator; we only care about the final state
