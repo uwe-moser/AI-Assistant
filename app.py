@@ -2,11 +2,12 @@ import base64
 import gradio as gr
 from sidekick import Sidekick
 from session_manager import SessionManager
-from scheduler import _list_tasks, _remove_task
+from scheduler import _list_tasks, _remove_task, TaskRunner
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import HumanMessage, AIMessage
 
 session_manager = SessionManager()
+task_runner = TaskRunner()
 
 with open("ApexFlow.png", "rb") as _f:
     _logo_b64 = base64.b64encode(_f.read()).decode()
@@ -31,6 +32,7 @@ def get_history_for_session(session_id):
 
 
 async def initial_setup():
+    await task_runner.start()
     session_id = session_manager.get_or_create_latest()
     sidekick = Sidekick(session_id=session_id)
     await sidekick.setup()
@@ -49,7 +51,7 @@ async def initial_setup():
 
 async def process_message(sidekick, message, success_criteria, history):
     async for updated_history in sidekick.run_superstep(message, success_criteria, history):
-        yield updated_history, sidekick, ""
+        yield updated_history, sidekick, "", load_scheduled_tasks()
 
 
 async def switch_session(session_id, old_sidekick):
@@ -301,17 +303,17 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
     message.submit(
         process_message,
         inputs=[sidekick, message, success_criteria, chatbot],
-        outputs=[chatbot, sidekick, message],
+        outputs=[chatbot, sidekick, message, scheduled_tasks_table],
     )
     success_criteria.submit(
         process_message,
         inputs=[sidekick, message, success_criteria, chatbot],
-        outputs=[chatbot, sidekick, message],
+        outputs=[chatbot, sidekick, message, scheduled_tasks_table],
     )
     go_button.click(
         process_message,
         inputs=[sidekick, message, success_criteria, chatbot],
-        outputs=[chatbot, sidekick, message],
+        outputs=[chatbot, sidekick, message, scheduled_tasks_table],
     )
     reset_button.click(
         reset,

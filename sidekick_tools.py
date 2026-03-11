@@ -106,7 +106,7 @@ def create_pdf(input: str) -> str:
     os.makedirs("sandbox", exist_ok=True)
 
     pdf = FPDF()
-    pdf.set_margins(20, 20, 20)
+    pdf.set_margins(15, 15, 15)
     pdf.add_page()
 
     # Try to use a Unicode-capable TTF font, fall back to Helvetica with sanitization
@@ -136,7 +136,15 @@ def create_pdf(input: str) -> str:
         if paragraph.strip() == "":
             pdf.ln(4)
         else:
-            pdf.multi_cell(0, 7, paragraph)
+            try:
+                pdf.multi_cell(0, 7, paragraph)
+            except Exception:
+                # Long unbreakable strings (URLs, etc.) can exceed page width;
+                # force-wrap by inserting spaces every 80 chars
+                wrapped = "\n".join(
+                    paragraph[i:i+80] for i in range(0, len(paragraph), 80)
+                )
+                pdf.multi_cell(0, 7, wrapped)
 
     pdf.output(full_path)
     return f"PDF successfully created at sandbox/{filename}"

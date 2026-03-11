@@ -6,6 +6,8 @@ Each task stores a natural-language description, a cron expression,
 and an optional callback (e.g. push notification with results).
 """
 
+import asyncio
+import logging
 import sqlite3
 import uuid
 from datetime import datetime
@@ -14,7 +16,12 @@ from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+log = logging.getLogger(__name__)
+
 DB_PATH = "sidekick_scheduled_tasks.db"
+
+# Global reference to the running TaskRunner (set by TaskRunner.start())
+_runner: Optional["TaskRunner"] = None
 
 # ---------------------------------------------------------------------------
 # Database helpers
@@ -124,6 +131,121 @@ def validate_cron(cron_expr: str) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
+# Task Runner – APScheduler runtime engine
+# ---------------------------------------------------------------------------
+
+class TaskRunner:
+    """Manages the APScheduler instance that actually executes scheduled tasks."""
+
+    def __init__(self):
+        self._scheduler = AsyncIOScheduler()
+        self._started = False
+
+    # -- lifecycle -----------------------------------------------------------
+
+    async def start(self):
+        """Load all enabled tasks from the DB and start the scheduler."""
+        if self._started:
+            return
+        global _runner
+        _runner = self
+
+        for task in _list_tasks():
+            if task["enabled"]:
+                self._register_job(task)
+
+        self._scheduler.start()
+        self._started = True
+        log.info("TaskRunner started with %d job(s)", len(self._scheduler.get_jobs()))
+
+    def stop(self):
+        global _runner
+        if self._scheduler.running:
+            self._scheduler.shutdown(wait=False)
+        _runner = None
+        log.info("TaskRunner stopped")
+
+    # -- job management ------------------------------------------------------
+
+    def _register_job(self, task: dict):
+        """Add a cron job for *task* (dict from DB) to the scheduler."""
+        trigger = CronTrigger.from_crontab(task["cron_expr"])
+        self._scheduler.add_job(
+            _execute_task,
+            trigger=trigger,
+            id=task["id"],
+            args=[task["id"]],
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+
+    def add(self, task_id: str):
+        """Register a newly-created task in the live scheduler."""
+        task = _get_task(task_id)
+        if task and task["enabled"]:
+            self._register_job(task)
+
+    def remove(self, task_id: str):
+        """Remove a task from the live scheduler (if present)."""
+        try:
+            self._scheduler.remove_job(task_id)
+        except Exception:
+            pass  # job may not exist if it was already disabled
+
+
+async def _execute_task(task_id: str):
+    """Run a single scheduled task through a temporary Sidekick instance."""
+    task = _get_task(task_id)
+    if not task or not task["enabled"]:
+        return
+
+    log.info("Executing scheduled task %s: %s", task_id, task["description"])
+
+    # Import here to avoid circular imports (sidekick imports scheduler tools)
+    from sidekick import Sidekick
+
+    sidekick = None
+    try:
+        session_id = f"scheduled-{task_id}-{uuid.uuid4().hex[:6]}"
+        sidekick = Sidekick(session_id=session_id)
+        await sidekick.setup()
+
+        result_text = ""
+        async for _ in sidekick.run_superstep(
+            task["description"],
+            "Complete the task described. Provide a concise result.",
+            [],
+        ):
+            pass  # consume the generator; we only care about the final state
+
+        # Grab the last AI message from chat history
+        messages = sidekick.chat_history.messages
+        if messages:
+            result_text = messages[-1].content[:2000]
+        else:
+            result_text = "(no output)"
+
+        _update_task_result(task_id, result_text)
+        log.info("Task %s completed: %s", task_id, result_text[:120])
+
+        # Optional push notification
+        if task["notify"]:
+            try:
+                from sidekick_tools import push
+                push(f"Scheduled task completed: {task['description']}\n\n{result_text[:500]}")
+            except Exception as e:
+                log.warning("Push notification failed for task %s: %s", task_id, e)
+
+    except Exception as e:
+        error_msg = f"Error: {e}"
+        _update_task_result(task_id, error_msg)
+        log.exception("Task %s failed", task_id)
+    finally:
+        if sidekick:
+            sidekick.cleanup()
+
+
+# ---------------------------------------------------------------------------
 # Tool-facing functions (called by LangChain tools)
 # ---------------------------------------------------------------------------
 
@@ -148,6 +270,11 @@ def schedule_task(description: str, cron: str, notify: bool = False) -> str:
         return f"Error: invalid cron expression '{cron}'. {err}"
 
     task_id = _add_task(description, cron, notify=notify)
+
+    # Register in the live scheduler so it starts running immediately
+    if _runner:
+        _runner.add(task_id)
+
     return (
         f"Task scheduled successfully.\n"
         f"  ID: {task_id}\n"
@@ -185,5 +312,8 @@ def cancel_scheduled_task(task_id: str) -> str:
     if not task_id:
         return "Error: task ID is required."
     if _remove_task(task_id):
+        # Remove from live scheduler
+        if _runner:
+            _runner.remove(task_id)
         return f"Task '{task_id}' has been cancelled and removed."
     return f"Error: no task found with ID '{task_id}'."

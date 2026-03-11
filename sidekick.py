@@ -156,16 +156,14 @@ Assistant replied: {assistant_reply[:500]}"""
     {state["feedback_on_work"]}
     With this feedback, please continue the assignment, ensuring that you meet the success criteria or have a question for the user."""
 
-        # Add in the system message
-
-        found_system_message = False
-        messages = state["messages"]
-        for message in messages:
-            if isinstance(message, SystemMessage):
-                message.content = system_message
-                found_system_message = True
-
-        if not found_system_message:
+        # Build messages list with system message, without mutating state in-place
+        # (in-place mutation corrupts LangGraph checkpoint history, breaking
+        # tool_calls / tool_response pairing across worker iterations)
+        messages = [
+            SystemMessage(content=system_message) if isinstance(m, SystemMessage) else m
+            for m in state["messages"]
+        ]
+        if not any(isinstance(m, SystemMessage) for m in state["messages"]):
             messages = [SystemMessage(content=system_message)] + messages
 
         # Invoke the LLM with tools
