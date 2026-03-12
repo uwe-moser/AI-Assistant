@@ -527,6 +527,29 @@ class TestOtherToolsAssembly:
                 assert has_run or has_invoke, \
                     f"Tool '{tool.name}' has neither .run() nor .invoke()"
 
+    @pytest.mark.asyncio
+    async def test_google_places_included_when_api_key_set(self):
+        from sidekick_tools import other_tools
+        mock_tool = MagicMock()
+        mock_tool.name = "google_places"
+        mock_tool.description = "Search Google Maps"
+        with patch("sidekick_tools.serper"), \
+             patch.dict(os.environ, {"GPLACES_API_KEY": "fake-key-for-test"}), \
+             patch("sidekick_tools.GooglePlacesTool", return_value=mock_tool):
+            tools = await other_tools()
+            names = {t.name for t in tools}
+            assert "google_places" in names
+
+    @pytest.mark.asyncio
+    async def test_google_places_excluded_when_no_api_key(self):
+        from sidekick_tools import other_tools
+        with patch("sidekick_tools.serper"), \
+             patch.dict(os.environ, {}, clear=False) as env:
+            env.pop("GPLACES_API_KEY", None)
+            tools = await other_tools()
+            names = {t.name for t in tools}
+            assert "google_places" not in names
+
 
 # ===================================================================
 # Spreadsheet — read_spreadsheet

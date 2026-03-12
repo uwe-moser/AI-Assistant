@@ -14,6 +14,7 @@ from langchain_community.utilities import GoogleSerperAPIWrapper
 from langchain_community.utilities.wikipedia import WikipediaAPIWrapper
 from langchain_community.tools.arxiv.tool import ArxivQueryRun
 from langchain_community.utilities.arxiv import ArxivAPIWrapper
+from langchain_google_community import GooglePlacesTool
 from pypdf import PdfReader
 from youtube_transcript_api import YouTubeTranscriptApi
 import html as html_module
@@ -590,5 +591,10 @@ async def other_tools():
         ),
     )
 
-    return file_tools + [push_tool, tool_search, python_repl, wiki_tool, arxiv_tool, pdf_tool, youtube_tool, create_pdf_tool, read_spreadsheet_tool, write_spreadsheet_tool, chart_data_tool, schedule_task_tool, list_tasks_tool, cancel_task_tool, search_kb_tool, add_kb_tool, list_kb_tool, remove_kb_tool]
+    all_tools = file_tools + [push_tool, tool_search, python_repl, wiki_tool, arxiv_tool, pdf_tool, youtube_tool, create_pdf_tool, read_spreadsheet_tool, write_spreadsheet_tool, chart_data_tool, schedule_task_tool, list_tasks_tool, cancel_task_tool, search_kb_tool, add_kb_tool, list_kb_tool, remove_kb_tool]
+
+    if os.getenv("GPLACES_API_KEY"):
+        all_tools.append(GooglePlacesTool())
+
+    return all_tools
 

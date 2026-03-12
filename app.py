@@ -216,6 +216,7 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
         <span class="cap-chip">🌐 Web Navigation<span class="cap-tip">Browse the internet, navigate to URLs, and extract information from web pages</span></span>
         <span class="cap-chip">🔍 Data Extraction<span class="cap-tip">Extract text and hyperlinks from web pages, search for files in directories</span></span>
         <span class="cap-chip">🎬 YouTube Transcripts<span class="cap-tip">Fetch transcripts from YouTube videos for summarisation and analysis</span></span>
+        <span class="cap-chip">📍 Google Places<span class="cap-tip">Search for places and points of interest using Google Maps — get names, addresses, phone numbers, and websites</span></span>
       </div>
     </div>
 
