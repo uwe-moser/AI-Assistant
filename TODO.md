@@ -162,13 +162,16 @@ _Nothing currently in progress._
 
 **Goal:** Let the agent index and search your own documents (PDFs, notes, markdown) so it can answer questions grounded in your personal data.
 
-- [ ] Add a `sandbox/knowledge/` directory for user-uploaded documents
-- [ ] Implement document chunking + embedding (OpenAI embeddings or local via `sentence-transformers`)
-- [ ] Store embeddings in a vector DB (ChromaDB or FAISS — lightweight, file-based)
-- [ ] Implement a `search_knowledge_base(query)` tool that retrieves relevant chunks
-- [ ] Re-index on file changes (or on-demand via a UI button)
+- [x] Add a `sandbox/knowledge/` directory for user-uploaded documents
+- [x] Implement document chunking + embedding (OpenAI embeddings via `langchain-openai`)
+- [x] Store embeddings in a vector DB (ChromaDB — lightweight, file-based, persisted to `sandbox/chroma_db/`)
+- [x] Implement a `search_knowledge_base(query)` tool that retrieves relevant chunks
+- [x] Re-index on-demand via a UI button
+- [x] Additional tools: `add_to_knowledge_base`, `list_knowledge_base`, `remove_from_knowledge_base`
+- [x] File upload UI in Gradio with re-index button and document list
+- [x] Unit tests (37 tests covering extraction, hashing, indexing, search, listing, removal, tool wrappers)
 
-**Files affected:** [sidekick_tools.py](sidekick_tools.py), [app.py](app.py), new `knowledge.py`, [pyproject.toml](pyproject.toml)
+**Files affected:** [sidekick_tools.py](sidekick_tools.py), [app.py](app.py), new [knowledge.py](knowledge.py), [pyproject.toml](pyproject.toml), [sidekick.py](sidekick.py), [README.MD](README.MD)
 
 ---
 

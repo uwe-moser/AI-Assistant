@@ -1,8 +1,11 @@
 import base64
+import os
+import shutil
 import gradio as gr
 from sidekick import Sidekick
 from session_manager import SessionManager
 from scheduler import _list_tasks, _remove_task, TaskRunner
+from knowledge import KnowledgeBase
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -125,6 +128,45 @@ def cancel_task_and_refresh(task_id):
     return load_scheduled_tasks(), ""
 
 
+def upload_to_knowledge_base(files):
+    """Copy uploaded files to sandbox/knowledge/ and index them."""
+    if not files:
+        return "No files selected.", load_knowledge_base_docs()
+
+    kb = KnowledgeBase()
+    results = []
+    for file_path in files:
+        filename = os.path.basename(file_path)
+        dest = os.path.join("sandbox", "knowledge", filename)
+        shutil.copy2(file_path, dest)
+        result = kb.add_document(dest)
+        results.append(result)
+
+    return "\n".join(results), load_knowledge_base_docs()
+
+
+def reindex_knowledge_base():
+    """Re-index all files in sandbox/knowledge/."""
+    kb = KnowledgeBase()
+    result = kb.index_all()
+    return result, load_knowledge_base_docs()
+
+
+def load_knowledge_base_docs():
+    """Load knowledge base document list for the UI table."""
+    kb = KnowledgeBase()
+    if kb._collection.count() == 0:
+        return []
+
+    all_meta = kb._collection.get()["metadatas"]
+    doc_chunks: dict[str, int] = {}
+    for meta in all_meta:
+        source = meta.get("source", "unknown")
+        doc_chunks[source] = doc_chunks.get(source, 0) + 1
+
+    return [[source, str(count)] for source, count in sorted(doc_chunks.items())]
+
+
 with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) as ui:
     gr.HTML(f"""
 <div style="display: flex; align-items: center; gap: 24px; margin-bottom: 4px; width: 100%;">
@@ -200,6 +242,7 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
       <div style="display: flex; flex-wrap: wrap; gap: 5px;">
         <span class="cap-chip">📖 Wikipedia<span class="cap-tip">Retrieve information from Wikipedia for general knowledge queries</span></span>
         <span class="cap-chip">🎓 arXiv Search<span class="cap-tip">Search and retrieve academic papers from arXiv</span></span>
+        <span class="cap-chip">🧠 Knowledge Base<span class="cap-tip">Search your own indexed documents (PDFs, notes, markdown, CSV) with semantic search</span></span>
       </div>
     </div>
 
@@ -251,6 +294,25 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
             cancel_task_id = gr.Textbox(label="Task ID to cancel", placeholder="e.g. a1b2c3d4", scale=3)
             cancel_task_btn = gr.Button("Cancel Task", variant="stop", scale=1)
             refresh_tasks_btn = gr.Button("Refresh", variant="secondary", scale=1)
+
+    # Knowledge Base panel
+    with gr.Accordion("Knowledge Base", open=False):
+        kb_docs_table = gr.Dataframe(
+            headers=["Document", "Chunks"],
+            datatype=["str", "str"],
+            interactive=False,
+            label="Indexed Documents",
+        )
+        with gr.Row():
+            kb_upload = gr.File(
+                label="Upload documents to knowledge base",
+                file_count="multiple",
+                file_types=[".pdf", ".txt", ".md", ".csv"],
+                scale=3,
+            )
+        with gr.Row():
+            kb_status = gr.Textbox(label="Status", interactive=False, scale=3)
+            kb_reindex_btn = gr.Button("Re-index", variant="secondary", scale=1)
 
     # Chat
     with gr.Row():
@@ -328,6 +390,20 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
         cancel_task_and_refresh,
         inputs=[cancel_task_id],
         outputs=[scheduled_tasks_table, cancel_task_id],
+    )
+
+
+    # Knowledge base panel wiring
+    ui.load(load_knowledge_base_docs, inputs=[], outputs=[kb_docs_table])
+    kb_upload.upload(
+        upload_to_knowledge_base,
+        inputs=[kb_upload],
+        outputs=[kb_status, kb_docs_table],
+    )
+    kb_reindex_btn.click(
+        reindex_knowledge_base,
+        inputs=[],
+        outputs=[kb_status, kb_docs_table],
     )
 
 

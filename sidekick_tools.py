@@ -27,6 +27,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scheduler import schedule_task, list_scheduled_tasks, cancel_scheduled_task
+from knowledge import KnowledgeBase
 
 
 
@@ -407,6 +408,58 @@ def chart_data(input: str) -> str:
     return f"Chart successfully saved at sandbox/{filename}"
 
 
+_kb: KnowledgeBase | None = None
+
+
+def _get_kb() -> KnowledgeBase:
+    """Lazy-initialise and return the singleton KnowledgeBase instance."""
+    global _kb
+    if _kb is None:
+        _kb = KnowledgeBase()
+    return _kb
+
+
+def search_knowledge_base(query: str) -> str:
+    """Search your personal knowledge base for information relevant to the query.
+    The knowledge base contains documents (PDFs, text files, markdown, CSV) that
+    you have previously indexed. Returns the most relevant text chunks with source info.
+    """
+    kb = _get_kb()
+    return kb.search(query)
+
+
+def add_to_knowledge_base(file_path: str) -> str:
+    """Add a document to the knowledge base for future semantic search.
+    Pass a file path relative to the sandbox directory (e.g. 'report.pdf' or 'knowledge/notes.md').
+    Supported formats: PDF, TXT, Markdown, CSV.
+    """
+    full_path = os.path.join("sandbox", file_path)
+    kb = _get_kb()
+    return kb.add_document(full_path)
+
+
+def list_knowledge_base() -> str:
+    """List all documents currently indexed in the knowledge base, with their chunk counts."""
+    kb = _get_kb()
+    return kb.list_documents()
+
+
+def remove_from_knowledge_base(filename: str) -> str:
+    """Remove a document from the knowledge base by filename (e.g. 'report.pdf').
+    This only removes it from the search index, not from disk.
+    """
+    kb = _get_kb()
+    return kb.remove_document(filename)
+
+
+def reindex_knowledge_base() -> str:
+    """Re-scan the sandbox/knowledge/ directory and index all new or changed files.
+    Unchanged files are skipped automatically.
+    """
+    kb = _get_kb()
+    return kb.index_all()
+
+
 async def other_tools():
     push_tool = Tool(name="send_push_notification", func=push, description="Use this tool when you want to send a push notification")
     file_tools = get_file_tools()
@@ -502,5 +555,40 @@ async def other_tools():
         description="Cancel and remove a scheduled task by its ID (e.g. 'a1b2c3d4').",
     )
 
-    return file_tools + [push_tool, tool_search, python_repl, wiki_tool, arxiv_tool, pdf_tool, youtube_tool, create_pdf_tool, read_spreadsheet_tool, write_spreadsheet_tool, chart_data_tool, schedule_task_tool, list_tasks_tool, cancel_task_tool]
+    search_kb_tool = Tool(
+        name="search_knowledge_base",
+        func=search_knowledge_base,
+        description=(
+            "Search your personal knowledge base for information relevant to a query. "
+            "The knowledge base contains documents (PDFs, text files, markdown, CSV) that have been indexed. "
+            "Returns the most relevant text chunks with source file info. Use this when the user asks about their own documents."
+        ),
+    )
+
+    add_kb_tool = Tool(
+        name="add_to_knowledge_base",
+        func=add_to_knowledge_base,
+        description=(
+            "Add a document to the knowledge base for future semantic search. "
+            "Pass a file path relative to the sandbox directory (e.g. 'report.pdf' or 'knowledge/notes.md'). "
+            "Supported formats: PDF, TXT, Markdown, CSV."
+        ),
+    )
+
+    list_kb_tool = Tool(
+        name="list_knowledge_base",
+        func=list_knowledge_base,
+        description="List all documents currently indexed in the knowledge base with their chunk counts.",
+    )
+
+    remove_kb_tool = Tool(
+        name="remove_from_knowledge_base",
+        func=remove_from_knowledge_base,
+        description=(
+            "Remove a document from the knowledge base search index by filename (e.g. 'report.pdf'). "
+            "This only removes it from the index, not from disk."
+        ),
+    )
+
+    return file_tools + [push_tool, tool_search, python_repl, wiki_tool, arxiv_tool, pdf_tool, youtube_tool, create_pdf_tool, read_spreadsheet_tool, write_spreadsheet_tool, chart_data_tool, schedule_task_tool, list_tasks_tool, cancel_task_tool, search_kb_tool, add_kb_tool, list_kb_tool, remove_kb_tool]
 
