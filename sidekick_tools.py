@@ -591,7 +591,10 @@ async def other_tools():
         ),
     )
 
-    google_places_tool = GooglePlacesTool()
+    all_tools = file_tools + [push_tool, tool_search, python_repl, wiki_tool, arxiv_tool, pdf_tool, youtube_tool, create_pdf_tool, read_spreadsheet_tool, write_spreadsheet_tool, chart_data_tool, schedule_task_tool, list_tasks_tool, cancel_task_tool, search_kb_tool, add_kb_tool, list_kb_tool, remove_kb_tool]
 
-    return file_tools + [push_tool, tool_search, python_repl, wiki_tool, arxiv_tool, pdf_tool, youtube_tool, create_pdf_tool, read_spreadsheet_tool, write_spreadsheet_tool, chart_data_tool, schedule_task_tool, list_tasks_tool, cancel_task_tool, search_kb_tool, add_kb_tool, list_kb_tool, remove_kb_tool, google_places_tool]
+    if os.getenv("GPLACES_API_KEY"):
+        all_tools.append(GooglePlacesTool())
+
+    return all_tools
 
