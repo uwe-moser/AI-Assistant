@@ -138,6 +138,10 @@ Assistant replied: {assistant_reply[:500]}"""
     - Task scheduler: Schedule recurring background tasks with cron expressions (e.g. "check news every morning"). Pass a JSON string with 'description', 'cron', and optional 'notify'.
     - List scheduled tasks: View all scheduled tasks with their status, schedule, and last results.
     - Cancel scheduled task: Remove a scheduled task by its ID.
+    - Knowledge base search: Search your personal document collection (PDFs, text files, markdown, CSV) for relevant information. Use this when the user asks about their own documents or uploaded files.
+    - Add to knowledge base: Index a document from the sandbox into the knowledge base for future semantic search.
+    - List knowledge base: Show all documents currently indexed in the knowledge base.
+    - Remove from knowledge base: Remove a document from the search index by filename.
 
     This is the success criteria:
     {state["success_criteria"]}

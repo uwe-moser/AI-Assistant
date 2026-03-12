@@ -31,6 +31,12 @@ It maintains persistent memory across sessions: it remembers facts about you and
 - **Spreadsheet writer** — create CSV or Excel files in the sandbox from structured data (headers + rows)
 - **Chart generator** — produce PNG bar, line, pie, or scatter charts from any dataset via matplotlib
 
+### Knowledge Base (RAG)
+- **Semantic search** — search your own indexed documents (PDFs, text files, markdown, CSV) using natural language queries
+- **Document indexing** — upload or drop files into `sandbox/knowledge/` and index them with one click; documents are chunked and embedded via OpenAI
+- **Index management** — add, remove, and re-index documents; unchanged files are skipped automatically
+- **Grounded answers** — the agent retrieves relevant chunks from your documents to answer questions with source citations
+
 ### Code & Computation
 - **Python execution** — run sandboxed Python code for calculations, data processing, or scripting
 
@@ -190,6 +196,7 @@ AI-Assistant/
 ├── app.py               # Gradio web UI and application entry point
 ├── sidekick.py          # Core agent: worker, evaluator, LangGraph state machine
 ├── sidekick_tools.py    # Tool integrations (browser, search, files, code, notifications)
+├── knowledge.py         # Knowledge base: document chunking, embedding, ChromaDB vector search
 ├── scheduler.py         # Task scheduling: SQLite-backed cron tasks with APScheduler
 ├── session_manager.py   # SQLite-backed session creation, listing, and renaming
 ├── user_profile.py      # Persistent key-value store for user facts
@@ -197,6 +204,7 @@ AI-Assistant/
 ├── pyproject.toml       # Project metadata and dependencies
 ├── .env                 # API keys and configuration (not committed)
 ├── sandbox/             # Working directory for agent file operations
+│   └── knowledge/       # Drop documents here for knowledge base indexing
 └── tests/
     ├── conftest.py      # Shared fixtures (mock LLMs, sandbox, sample PDF)
     └── test_tools_unit.py  # Unit tests for all tools in sidekick_tools.py
@@ -208,7 +216,8 @@ AI-Assistant/
 |---|---|
 | [app.py](app.py) | Launches the Gradio interface, wires UI events, manages the agent lifecycle |
 | [sidekick.py](sidekick.py) | Defines the `Sidekick` class, LangGraph state machine (3-node graph), worker and evaluator nodes, user profile extraction, and persistent memory |
-| [sidekick_tools.py](sidekick_tools.py) | Registers all tools: Playwright browser automation, Google Serper search, file I/O (sandbox), Python REPL, Wikipedia, arXiv, YouTube transcripts, PDF read/create, Pushover notifications, CSV/Excel read/write, PNG chart generation, task scheduling |
+| [sidekick_tools.py](sidekick_tools.py) | Registers all tools: Playwright browser automation, Google Serper search, file I/O (sandbox), Python REPL, Wikipedia, arXiv, YouTube transcripts, PDF read/create, Pushover notifications, CSV/Excel read/write, PNG chart generation, task scheduling, knowledge base search |
+| [knowledge.py](knowledge.py) | Document chunking, OpenAI embedding, ChromaDB vector storage, semantic search over local files |
 | [scheduler.py](scheduler.py) | SQLite-backed task scheduling with cron expressions; persists tasks, validates cron, tracks results |
 | [session_manager.py](session_manager.py) | Creates, lists, and renames named sessions backed by SQLite |
 | [user_profile.py](user_profile.py) | Stores and retrieves persistent facts about the user across sessions |
@@ -227,6 +236,7 @@ AI-Assistant/
 | Search | Google Serper, Wikipedia, arXiv |
 | Document processing | pypdf (reading), fpdf2 (creation) |
 | Structured data | openpyxl (Excel), csv (CSV), matplotlib (charts) |
+| Knowledge base / RAG | [ChromaDB](https://www.trychroma.com/) (vector store), OpenAI embeddings, langchain-text-splitters |
 | Media | youtube-transcript-api |
 | Task scheduling | [APScheduler](https://apscheduler.readthedocs.io/) with SQLite persistence |
 | Notifications | [Pushover](https://pushover.net/) |
