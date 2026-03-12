@@ -102,19 +102,18 @@ _Nothing currently in progress._
 
 ---
 
-### 4. Add Google Maps POI Distance Search
+### 4. Add Google Places Search
 
-**Goal:** Allow the agent to look up points of interest (POIs) near a given address and return their distances, travel times, and basic details.
+**Goal:** Allow the agent to look up points of interest (POIs) near a given address and return names, addresses, phone numbers, and websites using LangChain's `GooglePlacesTool`.
 
-- [ ] Add `GOOGLE_MAPS_API_KEY` to `.env` and document it in the README
-- [ ] Implement a `get_poi_distances` tool using the Google Maps Distance Matrix API and/or Places API
-  - Input: a reference address and a POI type or list of place names
-  - Output: sorted list of POIs with distance, travel time, and address
-- [ ] Register the tool in `other_tools()` and add it to the worker system prompt description
-- [ ] Add a "Maps & Distances" chip to the Capabilities section in `app.py`
-- [ ] Handle API errors and quota limits gracefully
+- [x] Add `GPLACES_API_KEY` to `.env` and document it in the README
+- [x] Add `googlemaps` and `langchain-google-community` to `pyproject.toml`
+- [x] Import and register `GooglePlacesTool` in `sidekick_tools.py` via `other_tools()`
+- [x] Add tool description to the worker system prompt in `sidekick.py`
+- [x] Add a "Google Places" chip to the Capabilities section in `app.py`
+- [ ] Document in README
 
-**Files affected:** [sidekick_tools.py](sidekick_tools.py), [app.py](app.py), [README.MD](README.MD), `.env`
+**Files affected:** [sidekick_tools.py](sidekick_tools.py), [sidekick.py](sidekick.py), [app.py](app.py), [pyproject.toml](pyproject.toml), [README.MD](README.MD), `.env`
 
 ---
 

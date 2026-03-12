@@ -142,6 +142,7 @@ Assistant replied: {assistant_reply[:500]}"""
     - Add to knowledge base: Index a document from the sandbox into the knowledge base for future semantic search.
     - List knowledge base: Show all documents currently indexed in the knowledge base.
     - Remove from knowledge base: Remove a document from the search index by filename.
+    - Google Places: Search for places and points of interest using Google Maps. Pass a search query like "Italian restaurants near Times Square, New York" to get names, addresses, phone numbers, and websites.
 
     This is the success criteria:
     {state["success_criteria"]}
