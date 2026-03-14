@@ -26,6 +26,15 @@ def sandbox(tmp_path):
     return str(sandbox_dir)
 
 
+@pytest.fixture
+def sandbox_cwd(tmp_path, monkeypatch):
+    """Create a sandbox/ subdir and chdir into its parent so relative
+    sandbox/ paths in the tool functions resolve to the temp directory."""
+    (tmp_path / "sandbox").mkdir()
+    monkeypatch.chdir(tmp_path)
+    return tmp_path / "sandbox"
+
+
 # ---------------------------------------------------------------------------
 # Temporary SQLite database for persistence tests
 # ---------------------------------------------------------------------------

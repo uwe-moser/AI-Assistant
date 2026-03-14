@@ -29,6 +29,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scheduler import schedule_task, list_scheduled_tasks, cancel_scheduled_task
 from knowledge import KnowledgeBase
+from apartment_search import apartment_search
 
 
 
@@ -595,6 +596,21 @@ async def other_tools():
 
     if os.getenv("GPLACES_API_KEY"):
         all_tools.append(GooglePlacesTool())
+
+    if os.getenv("GOOGLE_API_KEY") or os.getenv("GPLACES_API_KEY"):
+        apartment_search_tool = Tool(
+            name="apartment_search",
+            func=apartment_search,
+            description=(
+                "Perform a comprehensive apartment/address search analysis for families. "
+                "Finds the nearest Grundschule, Kita, Supermarket, Cafe, Playground, and Restaurant "
+                "with walking times, calculates commute times by car and public transport to "
+                "BMW (Bremer Str. 6, München) and Workday (Streitfeldstraße 19, München), "
+                "and gathers general area information. "
+                "Pass the full address, e.g. 'Leopoldstraße 97, München'."
+            ),
+        )
+        all_tools.append(apartment_search_tool)
 
     return all_tools
 

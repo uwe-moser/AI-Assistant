@@ -37,6 +37,13 @@ It maintains persistent memory across sessions: it remembers facts about you and
 - **Index management** — add, remove, and re-index documents; unchanged files are skipped automatically
 - **Grounded answers** — the agent retrieves relevant chunks from your documents to answer questions with source citations
 
+### Apartment Search Agent
+- **Family-friendly address analysis** — pass any address and get a comprehensive suitability report for families
+- **Nearby amenities** — automatically finds the nearest Grundschule, Kita, Supermarket, Cafe, Playground, and Restaurant with exact walking times and distances (via Google Distance Matrix API)
+- **Commute calculation** — calculates driving and public transport times to predefined work addresses (BMW and Workday offices in Munich)
+- **Area information** — searches the web for neighbourhood quality, livability, and family-friendliness ratings
+- **Interactive map** — generates a Leaflet/OpenStreetMap HTML map (`sandbox/apartment_search_map.html`) with color-coded markers for home, amenities, and work locations, each with info popups
+
 ### Code & Computation
 - **Python execution** — run sandboxed Python code for calculations, data processing, or scripting
 
@@ -115,6 +122,10 @@ OPENAI_API_KEY=your_openai_api_key
 
 # Web search (required for Google search tool)
 SERPER_API_KEY=your_serper_api_key
+
+# Google Maps APIs (required for apartment search + Google Places tool)
+# Needs Places API, Geocoding API, and Distance Matrix API enabled
+GPLACES_API_KEY=your_google_maps_api_key
 
 # Push notifications (optional)
 PUSHOVER_USER=your_pushover_user_key
@@ -196,6 +207,7 @@ AI-Assistant/
 ├── app.py               # Gradio web UI and application entry point
 ├── sidekick.py          # Core agent: worker, evaluator, LangGraph state machine
 ├── sidekick_tools.py    # Tool integrations (browser, search, files, code, notifications)
+├── apartment_search.py  # Apartment search agent: amenity finder, commute calculator, map generator
 ├── knowledge.py         # Knowledge base: document chunking, embedding, ChromaDB vector search
 ├── scheduler.py         # Task scheduling: SQLite-backed cron tasks with APScheduler
 ├── session_manager.py   # SQLite-backed session creation, listing, and renaming
@@ -206,8 +218,9 @@ AI-Assistant/
 ├── sandbox/             # Working directory for agent file operations
 │   └── knowledge/       # Drop documents here for knowledge base indexing
 └── tests/
-    ├── conftest.py      # Shared fixtures (mock LLMs, sandbox, sample PDF)
-    └── test_tools_unit.py  # Unit tests for all tools in sidekick_tools.py
+    ├── conftest.py            # Shared fixtures (mock LLMs, sandbox, sample PDF)
+    ├── test_tools_unit.py     # Unit tests for all tools in sidekick_tools.py
+    └── test_apartment_search.py  # Unit tests for the apartment search agent
 ```
 
 ### Key files
@@ -216,7 +229,8 @@ AI-Assistant/
 |---|---|
 | [app.py](app.py) | Launches the Gradio interface, wires UI events, manages the agent lifecycle |
 | [sidekick.py](sidekick.py) | Defines the `Sidekick` class, LangGraph state machine (3-node graph), worker and evaluator nodes, user profile extraction, and persistent memory |
-| [sidekick_tools.py](sidekick_tools.py) | Registers all tools: Playwright browser automation, Google Serper search, file I/O (sandbox), Python REPL, Wikipedia, arXiv, YouTube transcripts, PDF read/create, Pushover notifications, CSV/Excel read/write, PNG chart generation, task scheduling, knowledge base search |
+| [sidekick_tools.py](sidekick_tools.py) | Registers all tools: Playwright browser automation, Google Serper search, file I/O (sandbox), Python REPL, Wikipedia, arXiv, YouTube transcripts, PDF read/create, Pushover notifications, CSV/Excel read/write, PNG chart generation, task scheduling, knowledge base search, apartment search |
+| [apartment_search.py](apartment_search.py) | Apartment search agent: finds nearby family amenities with walking times, calculates commute to work, generates interactive Leaflet map |
 | [knowledge.py](knowledge.py) | Document chunking, OpenAI embedding, ChromaDB vector storage, semantic search over local files |
 | [scheduler.py](scheduler.py) | SQLite-backed task scheduling with cron expressions; persists tasks, validates cron, tracks results |
 | [session_manager.py](session_manager.py) | Creates, lists, and renames named sessions backed by SQLite |
@@ -233,7 +247,8 @@ AI-Assistant/
 | Agent orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) with SQLite checkpointing |
 | Browser automation | [Playwright](https://playwright.dev/) via LangChain toolkit |
 | UI | [Gradio](https://www.gradio.app/) |
-| Search | Google Serper, Wikipedia, arXiv |
+| Search | Google Serper, Wikipedia, arXiv, Google Places / Maps APIs |
+| Mapping | [Leaflet](https://leafletjs.com/) + OpenStreetMap (interactive HTML maps) |
 | Document processing | pypdf (reading), fpdf2 (creation) |
 | Structured data | openpyxl (Excel), csv (CSV), matplotlib (charts) |
 | Knowledge base / RAG | [ChromaDB](https://www.trychroma.com/) (vector store), OpenAI embeddings, langchain-text-splitters |
