@@ -73,6 +73,16 @@ class TestFindNearest:
         assert "5 Min." in result["walking_time"]
         assert "400 m" in result["walking_distance"]
 
+    def test_returns_coordinates(self, mock_gmaps):
+        from apartment_search import _find_nearest
+
+        result = _find_nearest(mock_gmaps, "Leopoldstr. 97, München", "Cafe", "cafe")
+
+        assert "lat" in result
+        assert "lng" in result
+        assert result["lat"] == 48.164
+        assert result["lng"] == 11.587
+
     def test_geocode_failure_returns_error(self, mock_gmaps):
         from apartment_search import _find_nearest
 
@@ -127,6 +137,14 @@ class TestCommuteTimes:
             assert entry["driving_time"] == "5 Min."
             assert entry["transit_time"] == "5 Min."
 
+    def test_returns_coordinates_for_work_addresses(self, mock_gmaps):
+        from apartment_search import _commute_times
+
+        results = _commute_times(mock_gmaps, "Test", [{"label": "Office", "address": "Addr"}])
+
+        assert "lat" in results[0]
+        assert "lng" in results[0]
+
     def test_handles_api_error_gracefully(self, mock_gmaps):
         from apartment_search import _commute_times
 
@@ -146,12 +164,59 @@ class TestCommuteTimes:
 
 
 # ===================================================================
+# _generate_map
+# ===================================================================
+
+class TestGenerateMap:
+
+    def test_creates_html_file(self, sandbox_cwd):
+        from apartment_search import _generate_map
+
+        amenities = [{"category": "Cafe", "name": "Test Cafe", "address": "Street 1",
+                       "walking_time": "3 Min.", "walking_distance": "250 m",
+                       "lat": 48.165, "lng": 11.588}]
+        commutes = [{"label": "BMW", "address": "Bremer Str. 6", "lat": 48.18, "lng": 11.56,
+                      "driving_time": "15 Min.", "transit_time": "25 Min."}]
+
+        path = _generate_map(48.1634, 11.5861, "Test Address", amenities, commutes)
+
+        assert os.path.isfile(path)
+        with open(path, encoding="utf-8") as f:
+            html = f.read()
+        assert "leaflet" in html.lower()
+        assert "Test Address" in html
+        assert "Test Cafe" in html
+        assert "BMW" in html
+
+    def test_handles_amenities_with_errors(self, sandbox_cwd):
+        from apartment_search import _generate_map
+
+        amenities = [{"category": "Kita", "error": "Not found"}]
+        path = _generate_map(48.16, 11.58, "Addr", amenities, [])
+
+        assert os.path.isfile(path)
+
+    def test_map_contains_legend(self, sandbox_cwd):
+        from apartment_search import _generate_map
+
+        amenities = [{"category": "Supermarket", "name": "Aldi", "address": "St 1",
+                       "walking_time": "5 Min.", "walking_distance": "400 m",
+                       "lat": 48.165, "lng": 11.588}]
+        path = _generate_map(48.16, 11.58, "Addr", amenities, [])
+
+        with open(path, encoding="utf-8") as f:
+            html = f.read()
+        assert "Legend" in html
+        assert "Supermarket" in html
+
+
+# ===================================================================
 # apartment_search (full integration with mocks)
 # ===================================================================
 
 class TestApartmentSearch:
 
-    def test_returns_complete_report(self, mock_gmaps):
+    def test_returns_complete_report(self, mock_gmaps, sandbox_cwd):
         from apartment_search import apartment_search
 
         with patch("apartment_search._init_client", return_value=mock_gmaps), \
@@ -164,8 +229,10 @@ class TestApartmentSearch:
         assert "Commute to Work" in result
         assert "Area Information" in result
         assert "Nice area info" in result
+        assert "Interactive Map" in result
+        assert "apartment_search_map.html" in result
 
-    def test_report_contains_all_amenity_categories(self, mock_gmaps):
+    def test_report_contains_all_amenity_categories(self, mock_gmaps, sandbox_cwd):
         from apartment_search import apartment_search, AMENITY_CATEGORIES
 
         with patch("apartment_search._init_client", return_value=mock_gmaps), \
@@ -175,7 +242,7 @@ class TestApartmentSearch:
         for label, _ in AMENITY_CATEGORIES:
             assert label in result
 
-    def test_report_contains_both_work_addresses(self, mock_gmaps):
+    def test_report_contains_both_work_addresses(self, mock_gmaps, sandbox_cwd):
         from apartment_search import apartment_search
 
         with patch("apartment_search._init_client", return_value=mock_gmaps), \
@@ -185,9 +252,28 @@ class TestApartmentSearch:
         assert "BMW" in result
         assert "Workday" in result
 
+    def test_generates_map_file(self, mock_gmaps, sandbox_cwd):
+        from apartment_search import apartment_search
+
+        with patch("apartment_search._init_client", return_value=mock_gmaps), \
+             patch("apartment_search._web_search_area", return_value=""):
+            apartment_search("Test Address")
+
+        assert (sandbox_cwd / "apartment_search_map.html").is_file()
+
     def test_no_api_key_raises_error(self):
         from apartment_search import apartment_search
 
         with patch.dict(os.environ, {}, clear=True):
             with pytest.raises(RuntimeError, match="No Google API key"):
                 apartment_search("Test Address")
+
+    def test_geocode_failure_returns_error(self, mock_gmaps):
+        from apartment_search import apartment_search
+
+        mock_gmaps.geocode.return_value = []
+        with patch("apartment_search._init_client", return_value=mock_gmaps):
+            result = apartment_search("Nowhere")
+
+        assert "Error" in result
+        assert "geocode" in result.lower()

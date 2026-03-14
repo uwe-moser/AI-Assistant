@@ -18,22 +18,6 @@ import pytest
 _real_path_join = os.path.join
 
 
-# ---------------------------------------------------------------------------
-# Fixture: sandbox directory with cwd pointing at its parent.
-# Patching os.path.join globally bleeds into third-party libs (openpyxl,
-# matplotlib), so for tools that call those libs we change the working
-# directory instead and let the relative "sandbox/" path resolve naturally.
-# ---------------------------------------------------------------------------
-
-@pytest.fixture
-def sandbox_cwd(tmp_path, monkeypatch):
-    """Create a sandbox/ subdir and chdir into its parent so relative
-    sandbox/ paths in the tool functions resolve to the temp directory."""
-    (tmp_path / "sandbox").mkdir()
-    monkeypatch.chdir(tmp_path)
-    return tmp_path / "sandbox"
-
-
 # ===================================================================
 # PDF — read_pdf
 # ===================================================================
