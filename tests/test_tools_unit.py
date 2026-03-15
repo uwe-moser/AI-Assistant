@@ -1,5 +1,5 @@
 """
-Unit tests for each tool in sidekick_tools.py.
+Unit tests for tool modules in the tools/ package.
 
 Tests tool functions directly with mocked external dependencies
 (APIs, network calls, file system boundaries).
@@ -26,18 +26,17 @@ class TestReadPdf:
     """Tests for the read_pdf tool."""
 
     def test_file_not_found_returns_error(self):
-        from sidekick_tools import read_pdf
+        from tools.documents import read_pdf
         result = read_pdf("nonexistent.pdf")
         assert "Error" in result
         assert "not found" in result
 
     def test_reads_existing_pdf(self, sandbox, sample_pdf):
         """read_pdf should return text with page markers for a valid PDF."""
-        from sidekick_tools import read_pdf
+        from tools.documents import read_pdf
 
-        # Redirect the sandbox join so read_pdf finds our temp file
         original_join = os.path.join
-        with patch("sidekick_tools.os.path.join",
+        with patch("tools.documents.os.path.join",
                     side_effect=lambda *a: original_join(sandbox, a[-1])):
             result = read_pdf(sample_pdf)
 
@@ -46,7 +45,7 @@ class TestReadPdf:
 
     def test_empty_pdf_returns_message(self, sandbox):
         """A PDF with blank pages should return a clear message."""
-        from sidekick_tools import read_pdf
+        from tools.documents import read_pdf
         from fpdf import FPDF
 
         pdf = FPDF()
@@ -55,7 +54,7 @@ class TestReadPdf:
         pdf.output(blank_file)
 
         original_join = os.path.join
-        with patch("sidekick_tools.os.path.join",
+        with patch("tools.documents.os.path.join",
                     side_effect=lambda *a: original_join(sandbox, a[-1])):
             result = read_pdf("blank.pdf")
 
@@ -63,7 +62,7 @@ class TestReadPdf:
 
     def test_multi_page_pdf(self, sandbox):
         """Each page should get its own marker."""
-        from sidekick_tools import read_pdf
+        from tools.documents import read_pdf
         from fpdf import FPDF
 
         pdf = FPDF()
@@ -75,7 +74,7 @@ class TestReadPdf:
         pdf.output(multi_file)
 
         original_join = os.path.join
-        with patch("sidekick_tools.os.path.join",
+        with patch("tools.documents.os.path.join",
                     side_effect=lambda *a: original_join(sandbox, a[-1])):
             result = read_pdf("multi.pdf")
 
@@ -92,11 +91,11 @@ class TestCreatePdf:
     """Tests for the create_pdf tool."""
 
     def test_creates_file_on_disk(self, sandbox):
-        from sidekick_tools import create_pdf
+        from tools.documents import create_pdf
 
-        with patch("sidekick_tools.os.path.join",
+        with patch("tools.documents.os.path.join",
                     side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
-            with patch("sidekick_tools.os.makedirs"):
+            with patch("tools.documents.os.makedirs"):
                 result = create_pdf(json.dumps({
                     "filename": "out.pdf",
                     "title": "Hello",
@@ -107,11 +106,11 @@ class TestCreatePdf:
         assert os.path.isfile(_real_path_join(sandbox, "out.pdf"))
 
     def test_auto_appends_pdf_extension(self, sandbox):
-        from sidekick_tools import create_pdf
+        from tools.documents import create_pdf
 
-        with patch("sidekick_tools.os.path.join",
+        with patch("tools.documents.os.path.join",
                     side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
-            with patch("sidekick_tools.os.makedirs"):
+            with patch("tools.documents.os.makedirs"):
                 result = create_pdf(json.dumps({
                     "filename": "no_ext",
                     "content": "data",
@@ -120,16 +119,16 @@ class TestCreatePdf:
         assert "no_ext.pdf" in result
 
     def test_invalid_json_returns_error(self):
-        from sidekick_tools import create_pdf
+        from tools.documents import create_pdf
         result = create_pdf("{bad json")
         assert "Error" in result
 
     def test_empty_content_succeeds(self, sandbox):
-        from sidekick_tools import create_pdf
+        from tools.documents import create_pdf
 
-        with patch("sidekick_tools.os.path.join",
+        with patch("tools.documents.os.path.join",
                     side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
-            with patch("sidekick_tools.os.makedirs"):
+            with patch("tools.documents.os.makedirs"):
                 result = create_pdf(json.dumps({
                     "filename": "empty.pdf",
                     "content": "",
@@ -139,11 +138,11 @@ class TestCreatePdf:
 
     def test_unicode_content_does_not_crash(self, sandbox):
         """Unicode characters (smart quotes, dashes, emoji) should render fine."""
-        from sidekick_tools import create_pdf
+        from tools.documents import create_pdf
 
-        with patch("sidekick_tools.os.path.join",
+        with patch("tools.documents.os.path.join",
                     side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
-            with patch("sidekick_tools.os.makedirs"):
+            with patch("tools.documents.os.makedirs"):
                 result = create_pdf(json.dumps({
                     "filename": "unicode.pdf",
                     "content": "\u201cHello\u201d \u2014 world\u2026 \U0001f600",
@@ -160,29 +159,29 @@ class TestContentToHtml:
     """Tests for the _content_to_html helper."""
 
     def test_title_becomes_h1(self):
-        from sidekick_tools import _content_to_html
+        from tools.documents import _content_to_html
         html = _content_to_html("My Title", "body text")
         assert "<h1>My Title</h1>" in html
 
     def test_no_title_omits_h1(self):
-        from sidekick_tools import _content_to_html
+        from tools.documents import _content_to_html
         html = _content_to_html("", "body text")
         assert "<h1>" not in html
 
     def test_html_entities_escaped(self):
-        from sidekick_tools import _content_to_html
+        from tools.documents import _content_to_html
         html = _content_to_html("", "a < b & c > d")
         assert "&lt;" in html
         assert "&amp;" in html
         assert "&gt;" in html
 
     def test_bold_markdown_converted(self):
-        from sidekick_tools import _content_to_html
+        from tools.documents import _content_to_html
         html = _content_to_html("", "**bold text**")
         assert "<strong>bold text</strong>" in html
 
     def test_empty_lines_produce_br(self):
-        from sidekick_tools import _content_to_html
+        from tools.documents import _content_to_html
         html = _content_to_html("", "line1\n\nline2")
         assert "<br>" in html
 
@@ -207,10 +206,10 @@ class TestGetYoutubeTranscript:
 
     def _run_with_mock(self, url_or_id, lines=None):
         """Call get_youtube_transcript with a mocked API and return (result, mock_instance)."""
-        from sidekick_tools import get_youtube_transcript
+        from tools.research import get_youtube_transcript
 
         transcript = self._make_mock_transcript(lines or ["Hello"])
-        with patch("sidekick_tools.YouTubeTranscriptApi") as MockCls:
+        with patch("tools.research.YouTubeTranscriptApi") as MockCls:
             mock_inst = MockCls.return_value
             mock_inst.fetch.return_value = transcript
             result = get_youtube_transcript(url_or_id)
@@ -241,9 +240,9 @@ class TestGetYoutubeTranscript:
         assert result == "Line 1\nLine 2\nLine 3"
 
     def test_api_error_propagates(self):
-        from sidekick_tools import get_youtube_transcript
+        from tools.research import get_youtube_transcript
 
-        with patch("sidekick_tools.YouTubeTranscriptApi") as MockCls:
+        with patch("tools.research.YouTubeTranscriptApi") as MockCls:
             mock_inst = MockCls.return_value
             mock_inst.fetch.side_effect = Exception("Video not found")
             with pytest.raises(Exception, match="Video not found"):
@@ -257,30 +256,31 @@ class TestGetYoutubeTranscript:
 class TestPushNotification:
     """Tests for the push() tool."""
 
-    @patch("sidekick_tools.requests.post")
+    @patch("tools.system.requests.post")
     def test_returns_success(self, mock_post):
-        from sidekick_tools import push
+        from tools.system import push
         assert push("Hello") == "success"
 
-    @patch("sidekick_tools.requests.post")
+    @patch("tools.system.requests.post")
     def test_sends_correct_payload(self, mock_post):
-        from sidekick_tools import push, pushover_url, pushover_token, pushover_user
-        push("Test msg")
+        from tools.system import push, PUSHOVER_URL
+        with patch.dict(os.environ, {"PUSHOVER_TOKEN": "test-token", "PUSHOVER_USER": "test-user"}):
+            push("Test msg")
         mock_post.assert_called_once_with(
-            pushover_url,
-            data={"token": pushover_token, "user": pushover_user, "message": "Test msg"},
+            PUSHOVER_URL,
+            data={"token": "test-token", "user": "test-user", "message": "Test msg"},
         )
 
-    @patch("sidekick_tools.requests.post")
+    @patch("tools.system.requests.post")
     def test_handles_empty_message(self, mock_post):
-        from sidekick_tools import push
+        from tools.system import push
         result = push("")
         assert result == "success"
         mock_post.assert_called_once()
 
-    @patch("sidekick_tools.requests.post", side_effect=ConnectionError("Network down"))
+    @patch("tools.system.requests.post", side_effect=ConnectionError("Network down"))
     def test_network_error_propagates(self, mock_post):
-        from sidekick_tools import push
+        from tools.system import push
         with pytest.raises(ConnectionError):
             push("will fail")
 
@@ -292,24 +292,30 @@ class TestPushNotification:
 class TestWebSearch:
     """Tests for the Google Serper search tool."""
 
-    @patch("sidekick_tools.serper")
-    def test_search_delegates_to_serper(self, mock_serper):
+    def test_search_delegates_to_serper(self):
+        mock_serper = MagicMock()
         mock_serper.run.return_value = '{"organic": [{"title": "Result 1"}]}'
-        result = mock_serper.run("LangChain tutorial")
+        with patch("tools.research._get_serper", return_value=mock_serper):
+            from tools.research import search
+            result = search("LangChain tutorial")
         mock_serper.run.assert_called_once_with("LangChain tutorial")
         assert "Result 1" in result
 
-    @patch("sidekick_tools.serper")
-    def test_search_empty_query(self, mock_serper):
+    def test_search_empty_query(self):
+        mock_serper = MagicMock()
         mock_serper.run.return_value = '{"organic": []}'
-        result = mock_serper.run("")
+        with patch("tools.research._get_serper", return_value=mock_serper):
+            from tools.research import search
+            result = search("")
         assert "organic" in result
 
-    @patch("sidekick_tools.serper")
-    def test_search_api_error(self, mock_serper):
+    def test_search_api_error(self):
+        mock_serper = MagicMock()
         mock_serper.run.side_effect = Exception("API rate limit")
-        with pytest.raises(Exception, match="API rate limit"):
-            mock_serper.run("query")
+        with patch("tools.research._get_serper", return_value=mock_serper):
+            from tools.research import search
+            with pytest.raises(Exception, match="API rate limit"):
+                search("query")
 
 
 # ===================================================================
@@ -412,18 +418,18 @@ class TestFileTools:
     """Tests for the FileManagementToolkit."""
 
     def test_returns_nonempty_list(self):
-        from sidekick_tools import get_file_tools
+        from tools.documents import get_file_tools
         tools = get_file_tools()
         assert isinstance(tools, list)
         assert len(tools) > 0
 
     def test_contains_expected_tools(self):
-        from sidekick_tools import get_file_tools
+        from tools.documents import get_file_tools
         names = {t.name for t in get_file_tools()}
         assert {"read_file", "write_file", "list_directory"}.issubset(names)
 
     def test_all_tools_have_descriptions(self):
-        from sidekick_tools import get_file_tools
+        from tools.documents import get_file_tools
         for tool in get_file_tools():
             assert tool.description, f"Tool '{tool.name}' missing description"
 
@@ -443,17 +449,17 @@ class TestPlaywrightTools:
 
         fake_tools = [MagicMock(name="navigate"), MagicMock(name="click")]
 
-        with patch("sidekick_tools.async_playwright") as mock_ap:
+        with patch("tools.browser.async_playwright") as mock_ap:
             mock_pw_instance = MagicMock()
             mock_pw_instance.chromium.launch = AsyncMock(return_value=mock_browser)
             mock_ap.return_value.start = AsyncMock(return_value=mock_pw_instance)
 
-            with patch("sidekick_tools.PlayWrightBrowserToolkit") as MockToolkit:
+            with patch("tools.browser.PlayWrightBrowserToolkit") as MockToolkit:
                 mock_tk = MagicMock()
                 mock_tk.get_tools.return_value = fake_tools
                 MockToolkit.from_browser.return_value = mock_tk
 
-                from sidekick_tools import playwright_tools
+                from tools.browser import playwright_tools
                 tools, browser, pw = await playwright_tools()
 
         assert tools == fake_tools
@@ -461,78 +467,81 @@ class TestPlaywrightTools:
 
 
 # ===================================================================
-# other_tools() Assembly
+# Tool Module Assembly
 # ===================================================================
 
-class TestOtherToolsAssembly:
-    """Tests for the other_tools() async function that assembles all non-browser tools."""
+class TestToolModuleAssembly:
+    """Tests that each tool module's get_tools() returns the expected tools."""
 
-    @pytest.mark.asyncio
-    async def test_returns_list_with_correct_count(self):
-        from sidekick_tools import other_tools
-        with patch("sidekick_tools.serper"):
-            tools = await other_tools()
-            assert isinstance(tools, list)
-            # 6 file tools + 8 custom tools = 14
-            assert len(tools) >= 12
-
-    @pytest.mark.asyncio
-    async def test_contains_all_expected_tool_names(self):
-        from sidekick_tools import other_tools
-        with patch("sidekick_tools.serper"):
-            tools = await other_tools()
+    def test_research_tools(self):
+        from tools.research import get_tools
+        with patch("tools.research._get_serper"):
+            tools = get_tools()
             names = {t.name for t in tools}
-            expected = {
-                "send_push_notification", "search", "Python_REPL",
-                "wikipedia", "arxiv", "read_pdf",
-                "get_youtube_transcript", "create_pdf",
-                "read_spreadsheet", "write_spreadsheet", "chart_data",
-            }
+            expected = {"search", "wikipedia", "arxiv", "get_youtube_transcript"}
             missing = expected - names
             assert not missing, f"Missing tools: {missing}"
 
-    @pytest.mark.asyncio
-    async def test_every_tool_has_description(self):
-        from sidekick_tools import other_tools
-        with patch("sidekick_tools.serper"):
-            tools = await other_tools()
-            for tool in tools:
-                assert tool.description, f"Tool '{tool.name}' has no description"
+    def test_documents_tools(self):
+        from tools.documents import get_tools
+        tools = get_tools()
+        names = {t.name for t in tools}
+        expected = {"read_pdf", "create_pdf", "read_spreadsheet", "write_spreadsheet", "chart_data"}
+        missing = expected - names
+        assert not missing, f"Missing tools: {missing}"
 
-    @pytest.mark.asyncio
-    async def test_every_tool_is_invocable(self):
-        from sidekick_tools import other_tools
-        with patch("sidekick_tools.serper"):
-            tools = await other_tools()
-            for tool in tools:
-                # LangChain tools expose .run() or .invoke()
-                has_run = hasattr(tool, "run") and callable(tool.run)
-                has_invoke = hasattr(tool, "invoke") and callable(tool.invoke)
-                assert has_run or has_invoke, \
-                    f"Tool '{tool.name}' has neither .run() nor .invoke()"
+    def test_system_tools(self):
+        from tools.system import get_tools
+        tools = get_tools()
+        names = {t.name for t in tools}
+        expected = {"send_push_notification", "Python_REPL", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"}
+        missing = expected - names
+        assert not missing, f"Missing tools: {missing}"
 
-    @pytest.mark.asyncio
-    async def test_google_places_included_when_api_key_set(self):
-        from sidekick_tools import other_tools
+    def test_knowledge_tools(self):
+        with patch("tools.knowledge_tools._get_kb"):
+            from tools.knowledge_tools import get_tools
+            tools = get_tools()
+            names = {t.name for t in tools}
+            expected = {"search_knowledge_base", "add_to_knowledge_base", "list_knowledge_base", "remove_from_knowledge_base"}
+            missing = expected - names
+            assert not missing, f"Missing tools: {missing}"
+
+    def test_location_tools_with_api_key(self):
         mock_tool = MagicMock()
         mock_tool.name = "google_places"
         mock_tool.description = "Search Google Maps"
-        with patch("sidekick_tools.serper"), \
-             patch.dict(os.environ, {"GPLACES_API_KEY": "fake-key-for-test"}), \
-             patch("sidekick_tools.GooglePlacesTool", return_value=mock_tool):
-            tools = await other_tools()
+        with patch.dict(os.environ, {"GPLACES_API_KEY": "fake-key-for-test"}), \
+             patch("langchain_google_community.GooglePlacesTool", return_value=mock_tool):
+            from tools.location import get_tools
+            tools = get_tools()
             names = {t.name for t in tools}
             assert "google_places" in names
 
-    @pytest.mark.asyncio
-    async def test_google_places_excluded_when_no_api_key(self):
-        from sidekick_tools import other_tools
-        with patch("sidekick_tools.serper"), \
-             patch.dict(os.environ, {}, clear=False) as env:
+    def test_location_tools_without_api_key(self):
+        with patch.dict(os.environ, {}, clear=False) as env:
             env.pop("GPLACES_API_KEY", None)
-            tools = await other_tools()
-            names = {t.name for t in tools}
-            assert "google_places" not in names
+            env.pop("GOOGLE_API_KEY", None)
+            from tools.location import get_tools
+            tools = get_tools()
+            assert len(tools) == 0
+
+    def test_all_tools_have_descriptions(self):
+        from tools.documents import get_tools as doc_tools
+        from tools.system import get_tools as sys_tools
+        all_tools = doc_tools() + sys_tools()
+        for tool in all_tools:
+            assert tool.description, f"Tool '{tool.name}' has no description"
+
+    def test_all_tools_are_invocable(self):
+        from tools.documents import get_tools as doc_tools
+        from tools.system import get_tools as sys_tools
+        all_tools = doc_tools() + sys_tools()
+        for tool in all_tools:
+            has_run = hasattr(tool, "run") and callable(tool.run)
+            has_invoke = hasattr(tool, "invoke") and callable(tool.invoke)
+            assert has_run or has_invoke, \
+                f"Tool '{tool.name}' has neither .run() nor .invoke()"
 
 
 # ===================================================================
@@ -547,24 +556,23 @@ class TestReadSpreadsheet:
         return lambda *a: _real_path_join(sandbox, a[-1])
 
     def test_file_not_found_returns_error(self):
-        from sidekick_tools import read_spreadsheet
+        from tools.documents import read_spreadsheet
         result = read_spreadsheet("nonexistent.csv")
         assert "Error" in result
         assert "not found" in result
 
     def test_unsupported_extension_returns_error(self, sandbox):
-        from sidekick_tools import read_spreadsheet
-        # Create a dummy .txt file in the sandbox so it passes the existence check
+        from tools.documents import read_spreadsheet
         txt_path = _real_path_join(sandbox, "data.txt")
         open(txt_path, "w").close()
-        with patch("sidekick_tools.os.path.join", side_effect=self._join_to(sandbox)):
+        with patch("tools.documents.os.path.join", side_effect=self._join_to(sandbox)):
             result = read_spreadsheet("data.txt")
         assert "Error" in result
         assert "unsupported" in result
 
     def test_reads_csv_headers_and_rows(self, sandbox):
         import csv as _csv
-        from sidekick_tools import read_spreadsheet
+        from tools.documents import read_spreadsheet
 
         csv_path = _real_path_join(sandbox, "sample.csv")
         with open(csv_path, "w", newline="") as f:
@@ -573,7 +581,7 @@ class TestReadSpreadsheet:
             writer.writerow(["Alice", "30", "NYC"])
             writer.writerow(["Bob", "25", "LA"])
 
-        with patch("sidekick_tools.os.path.join", side_effect=self._join_to(sandbox)):
+        with patch("tools.documents.os.path.join", side_effect=self._join_to(sandbox)):
             result = read_spreadsheet("sample.csv")
 
         assert "Name" in result
@@ -583,7 +591,7 @@ class TestReadSpreadsheet:
         assert "3 rows" in result  # header + 2 data rows
 
     def test_reads_xlsx_headers_and_rows(self, sandbox_cwd):
-        from sidekick_tools import read_spreadsheet
+        from tools.documents import read_spreadsheet
         import openpyxl
 
         wb = openpyxl.Workbook()
@@ -601,7 +609,7 @@ class TestReadSpreadsheet:
 
     def test_large_csv_shows_truncation_note(self, sandbox):
         import csv as _csv
-        from sidekick_tools import read_spreadsheet
+        from tools.documents import read_spreadsheet
 
         csv_path = _real_path_join(sandbox, "big.csv")
         with open(csv_path, "w", newline="") as f:
@@ -610,19 +618,19 @@ class TestReadSpreadsheet:
             for i in range(50):
                 writer.writerow([str(i), str(i * 10)])
 
-        with patch("sidekick_tools.os.path.join", side_effect=self._join_to(sandbox)):
+        with patch("tools.documents.os.path.join", side_effect=self._join_to(sandbox)):
             result = read_spreadsheet("big.csv")
 
         assert "more rows not shown" in result
 
     def test_csv_with_utf8_bom(self, sandbox):
-        from sidekick_tools import read_spreadsheet
+        from tools.documents import read_spreadsheet
 
         csv_path = _real_path_join(sandbox, "bom.csv")
         with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
             f.write("Name,Value\nAlice,42\n")
 
-        with patch("sidekick_tools.os.path.join", side_effect=self._join_to(sandbox)):
+        with patch("tools.documents.os.path.join", side_effect=self._join_to(sandbox)):
             result = read_spreadsheet("bom.csv")
 
         # BOM should be stripped; first column header should be clean
@@ -638,15 +646,15 @@ class TestWriteSpreadsheet:
     """Tests for the write_spreadsheet tool."""
 
     def test_invalid_json_returns_error(self):
-        from sidekick_tools import write_spreadsheet
+        from tools.documents import write_spreadsheet
         result = write_spreadsheet("{bad json")
         assert "Error" in result
 
     def test_unsupported_extension_returns_error(self, sandbox):
-        from sidekick_tools import write_spreadsheet
-        with patch("sidekick_tools.os.path.join",
+        from tools.documents import write_spreadsheet
+        with patch("tools.documents.os.path.join",
                    side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
-            with patch("sidekick_tools.os.makedirs"):
+            with patch("tools.documents.os.makedirs"):
                 result = write_spreadsheet(json.dumps({
                     "filename": "out.txt",
                     "headers": ["A"],
@@ -656,11 +664,11 @@ class TestWriteSpreadsheet:
         assert "unsupported" in result
 
     def test_creates_csv_file(self, sandbox):
-        from sidekick_tools import write_spreadsheet
+        from tools.documents import write_spreadsheet
 
-        with patch("sidekick_tools.os.path.join",
+        with patch("tools.documents.os.path.join",
                    side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
-            with patch("sidekick_tools.os.makedirs"):
+            with patch("tools.documents.os.makedirs"):
                 result = write_spreadsheet(json.dumps({
                     "filename": "out.csv",
                     "headers": ["Name", "Score"],
@@ -672,11 +680,11 @@ class TestWriteSpreadsheet:
 
     def test_csv_content_is_correct(self, sandbox):
         import csv as _csv
-        from sidekick_tools import write_spreadsheet
+        from tools.documents import write_spreadsheet
 
-        with patch("sidekick_tools.os.path.join",
+        with patch("tools.documents.os.path.join",
                    side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
-            with patch("sidekick_tools.os.makedirs"):
+            with patch("tools.documents.os.makedirs"):
                 write_spreadsheet(json.dumps({
                     "filename": "check.csv",
                     "headers": ["X", "Y"],
@@ -692,11 +700,11 @@ class TestWriteSpreadsheet:
 
     def test_creates_xlsx_file(self, sandbox):
         import openpyxl
-        from sidekick_tools import write_spreadsheet
+        from tools.documents import write_spreadsheet
 
-        with patch("sidekick_tools.os.path.join",
+        with patch("tools.documents.os.path.join",
                    side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
-            with patch("sidekick_tools.os.makedirs"):
+            with patch("tools.documents.os.makedirs"):
                 result = write_spreadsheet(json.dumps({
                     "filename": "out.xlsx",
                     "headers": ["Col1", "Col2"],
@@ -714,11 +722,11 @@ class TestWriteSpreadsheet:
         assert rows[1] == (1, 2)
 
     def test_row_count_in_success_message(self, sandbox):
-        from sidekick_tools import write_spreadsheet
+        from tools.documents import write_spreadsheet
 
-        with patch("sidekick_tools.os.path.join",
+        with patch("tools.documents.os.path.join",
                    side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
-            with patch("sidekick_tools.os.makedirs"):
+            with patch("tools.documents.os.makedirs"):
                 result = write_spreadsheet(json.dumps({
                     "filename": "count.csv",
                     "headers": ["A"],
@@ -729,11 +737,11 @@ class TestWriteSpreadsheet:
 
     def test_no_headers_writes_rows_only(self, sandbox):
         import csv as _csv
-        from sidekick_tools import write_spreadsheet
+        from tools.documents import write_spreadsheet
 
-        with patch("sidekick_tools.os.path.join",
+        with patch("tools.documents.os.path.join",
                    side_effect=lambda *a: _real_path_join(sandbox, a[-1])):
-            with patch("sidekick_tools.os.makedirs"):
+            with patch("tools.documents.os.makedirs"):
                 write_spreadsheet(json.dumps({
                     "filename": "noheader.csv",
                     "headers": [],
@@ -754,12 +762,12 @@ class TestChartData:
     """Tests for the chart_data tool."""
 
     def test_invalid_json_returns_error(self):
-        from sidekick_tools import chart_data
+        from tools.documents import chart_data
         result = chart_data("{bad json")
         assert "Error" in result
 
     def test_missing_datasets_returns_error(self, sandbox_cwd):
-        from sidekick_tools import chart_data
+        from tools.documents import chart_data
         result = chart_data(json.dumps({
             "filename": "chart.png",
             "chart_type": "bar",
@@ -769,7 +777,7 @@ class TestChartData:
         assert "Error" in result
 
     def _make_chart(self, sandbox_cwd, chart_type, filename="chart.png"):
-        from sidekick_tools import chart_data
+        from tools.documents import chart_data
         payload = json.dumps({
             "filename": filename,
             "chart_type": chart_type,
@@ -793,7 +801,7 @@ class TestChartData:
         assert header[:4] == b"\x89PNG"
 
     def test_multiple_datasets_bar_chart(self, sandbox_cwd):
-        from sidekick_tools import chart_data
+        from tools.documents import chart_data
         result = chart_data(json.dumps({
             "filename": "multi.png",
             "chart_type": "bar",

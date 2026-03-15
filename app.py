@@ -6,6 +6,7 @@ from sidekick import Sidekick
 from session_manager import SessionManager
 from scheduler import _list_tasks, _remove_task, TaskRunner
 from knowledge import KnowledgeBase
+from config import DB_PATH
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -23,7 +24,7 @@ def get_dropdown_choices():
 def get_history_for_session(session_id):
     hist = SQLChatMessageHistory(
         session_id=session_id,
-        connection="sqlite:///sidekick_chat_history.db",
+        connection=f"sqlite:///{DB_PATH}",
     )
     result = []
     for msg in hist.messages:
@@ -173,31 +174,29 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
   <img src="data:image/png;base64,{_logo_b64}" style="height: 180px; width: auto; flex-shrink: 0;">
   <div style="flex: 1; min-width: 0;">
     <p class="header-desc" style="margin: 0; font-size: 16px; color: #444; line-height: 1.6;">
-      Apex Flow is a high-performance information retrieval and processing assistant. It is designed to provide evidence-based answers to complex technical queries by integrating real-time web access, sandboxed code execution, and deep-file indexing into a single conversational interface.
-      Rather than relying solely on internal model weights, Apex Flow leverages a suite of specialized tools to verify facts, process local data, and cite academic sources in real-time.
+      ApexFlow is a multi-agent AI assistant powered by a hierarchical orchestrator architecture.
+      An orchestrator delegates tasks to six specialist agents — Research, Browser, Documents, Knowledge, Location, and System — each with its own focused tool set.
+      This design enables efficient, evidence-based answers to complex queries by combining real-time web access, sandboxed code execution, document search, and task automation.
     </p>
   </div>
 </div>
 """)
     gr.HTML("""
 <style>
-  .cap-chip {
-    background: #f3f0ff; border: 1px solid #d8d0f0; border-radius: 16px;
-    padding: 4px 12px; font-size: 13px; cursor: default; position: relative;
-    transition: background 0.15s; color: #333;
+  .agent-card {
+    background: #f8f6ff; border: 1px solid #e0d8f0; border-radius: 12px;
+    padding: 12px 16px; font-size: 13px; color: #333; line-height: 1.5;
   }
-  .cap-chip:hover { background: #e8e0ff; }
-  .cap-chip .cap-tip {
-    visibility: hidden; opacity: 0; transition: opacity 0.15s;
-    position: absolute; bottom: calc(100% + 6px); left: 0;
-    background: #333; color: #fff; padding: 5px 10px; border-radius: 6px;
-    font-size: 12px; white-space: nowrap; pointer-events: none; z-index: 10;
+  .agent-card .agent-name {
+    font-weight: 700; font-size: 14px; margin-bottom: 4px; color: #5b21b6;
   }
-  .cap-chip:hover .cap-tip { visibility: visible; opacity: 1; }
+  .agent-card .agent-tools {
+    font-size: 12px; color: #666; margin-top: 4px;
+  }
   @media (prefers-color-scheme: dark) {
-    .cap-chip { background: #2d2640; border-color: #4a3d70; color: #e0d8ff; }
-    .cap-chip:hover { background: #3d3360; }
-    .cap-cat-label { color: #9b8fc0 !important; }
+    .agent-card { background: #2d2640; border-color: #4a3d70; color: #e0d8ff; }
+    .agent-card .agent-name { color: #c4b8e8; }
+    .agent-card .agent-tools { color: #9b8fc0; }
     .cap-section-title { color: #c4b8e8 !important; }
     .header-desc { color: #ccc !important; }
   }
@@ -207,53 +206,43 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
   #rename-btn, #rename-btn button { width: fit-content !important; min-width: 0 !important; }
 </style>
 <div style="margin-bottom: 12px;">
-  <div class="cap-section-title" style="font-weight: 600; font-size: 14px; color: #555; margin-bottom: 8px;">🛠️ Capabilities</div>
-  <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 16px;">
+  <div class="cap-section-title" style="font-weight: 600; font-size: 14px; color: #555; margin-bottom: 8px;">Specialist Agents</div>
+  <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
 
-    <div>
-      <div class="cap-cat-label" style="font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Web &amp; Internet</div>
-      <div style="display: flex; flex-wrap: wrap; gap: 5px;">
-        <span class="cap-chip">🌐 Web Navigation<span class="cap-tip">Browse the internet, navigate to URLs, and extract information from web pages</span></span>
-        <span class="cap-chip">🔍 Data Extraction<span class="cap-tip">Extract text and hyperlinks from web pages, search for files in directories</span></span>
-        <span class="cap-chip">🎬 YouTube Transcripts<span class="cap-tip">Fetch transcripts from YouTube videos for summarisation and analysis</span></span>
-        <span class="cap-chip">📍 Google Places<span class="cap-tip">Search for places and points of interest using Google Maps — get names, addresses, phone numbers, and websites</span></span>
-      </div>
+    <div class="agent-card">
+      <div class="agent-name">Research Agent</div>
+      Web search, Wikipedia, arXiv papers, YouTube transcripts
+      <div class="agent-tools">Tools: Google Search, Wikipedia, arXiv, YouTube Transcript API</div>
     </div>
 
-    <div>
-      <div class="cap-cat-label" style="font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Files &amp; Documents</div>
-      <div style="display: flex; flex-wrap: wrap; gap: 5px;">
-        <span class="cap-chip">📁 File Management<span class="cap-tip">Read, write, move, copy, and delete files on disk</span></span>
-        <span class="cap-chip">📄 PDF Reader<span class="cap-tip">Extract and read text content from PDF files</span></span>
-        <span class="cap-chip">📝 PDF Creator<span class="cap-tip">Generate proper, openable PDF files with formatted content</span></span>
-      </div>
+    <div class="agent-card">
+      <div class="agent-name">Browser Agent</div>
+      Navigate websites, click links, fill forms, extract content
+      <div class="agent-tools">Tools: Playwright (Chromium), screenshots, page extraction</div>
     </div>
 
-    <div>
-      <div class="cap-cat-label" style="font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Structured Data</div>
-      <div style="display: flex; flex-wrap: wrap; gap: 5px;">
-        <span class="cap-chip">📊 Spreadsheet Reader<span class="cap-tip">Read CSV and Excel files from the sandbox — get column names, row count, and a data preview</span></span>
-        <span class="cap-chip">📋 Spreadsheet Writer<span class="cap-tip">Create CSV or Excel files in the sandbox from structured data (headers + rows)</span></span>
-        <span class="cap-chip">📈 Chart Generator<span class="cap-tip">Generate PNG bar, line, pie, or scatter charts from any dataset and save to the sandbox</span></span>
-      </div>
+    <div class="agent-card">
+      <div class="agent-name">Documents Agent</div>
+      File management, PDFs, spreadsheets, charts
+      <div class="agent-tools">Tools: File I/O, PDF read/create, CSV/Excel, matplotlib charts</div>
     </div>
 
-    <div>
-      <div class="cap-cat-label" style="font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Research</div>
-      <div style="display: flex; flex-wrap: wrap; gap: 5px;">
-        <span class="cap-chip">📖 Wikipedia<span class="cap-tip">Retrieve information from Wikipedia for general knowledge queries</span></span>
-        <span class="cap-chip">🎓 arXiv Search<span class="cap-tip">Search and retrieve academic papers from arXiv</span></span>
-        <span class="cap-chip">🧠 Knowledge Base<span class="cap-tip">Search your own indexed documents (PDFs, notes, markdown, CSV) with semantic search</span></span>
-      </div>
+    <div class="agent-card">
+      <div class="agent-name">Knowledge Agent</div>
+      Search and manage your personal document collection
+      <div class="agent-tools">Tools: ChromaDB semantic search, document indexing</div>
     </div>
 
-    <div>
-      <div class="cap-cat-label" style="font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Utilities</div>
-      <div style="display: flex; flex-wrap: wrap; gap: 5px;">
-        <span class="cap-chip">🐍 Python Execution<span class="cap-tip">Run Python code to perform calculations or process data</span></span>
-        <span class="cap-chip">🔔 Push Notifications<span class="cap-tip">Send push notifications to keep you updated on task progress</span></span>
-        <span class="cap-chip">⏰ Task Scheduling<span class="cap-tip">Schedule recurring background tasks with cron expressions — e.g. "check the news every morning"</span></span>
-      </div>
+    <div class="agent-card">
+      <div class="agent-name">Location Agent</div>
+      Address analysis, nearby amenities, commute times
+      <div class="agent-tools">Tools: Google Places, Maps, apartment search</div>
+    </div>
+
+    <div class="agent-card">
+      <div class="agent-name">System Agent</div>
+      Task scheduling, notifications, Python execution
+      <div class="agent-tools">Tools: APScheduler, Pushover, Python REPL</div>
     </div>
 
   </div>

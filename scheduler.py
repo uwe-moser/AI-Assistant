@@ -16,9 +16,11 @@ from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from config import TASKS_DB_PATH
+
 log = logging.getLogger(__name__)
 
-DB_PATH = "sidekick_scheduled_tasks.db"
+DB_PATH = TASKS_DB_PATH
 
 # Global reference to the running TaskRunner (set by TaskRunner.start())
 _runner: Optional["TaskRunner"] = None
@@ -208,7 +210,7 @@ async def _execute_task(task_id: str):
     try:
         session_id = f"scheduled-{task_id}-{uuid.uuid4().hex[:6]}"
         sidekick = Sidekick(session_id=session_id)
-        await sidekick.setup()
+        await sidekick.setup(include_browser=False)
 
         execution_prompt = (
             f"This is an automated scheduled task execution. "
@@ -243,7 +245,7 @@ async def _execute_task(task_id: str):
         # Optional push notification
         if task["notify"]:
             try:
-                from sidekick_tools import push
+                from tools.system import push
                 push(f"Scheduled task completed: {task['description']}\n\n{result_text[:500]}")
             except Exception as e:
                 log.warning("Push notification failed for task %s: %s", task_id, e)

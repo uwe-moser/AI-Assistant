@@ -376,39 +376,39 @@ class TestIndexAll:
 
 
 # ===================================================================
-# Tool functions in sidekick_tools.py
+# Tool functions in tools/knowledge_tools.py
 # ===================================================================
 
 class TestKnowledgeBaseTools:
-    """Tests for the knowledge base tool wrappers in sidekick_tools.py."""
+    """Tests for the knowledge base tool wrappers in tools/knowledge_tools.py."""
 
     def test_search_kb_tool_delegates(self, kb):
-        with patch("sidekick_tools._get_kb", return_value=kb):
-            from sidekick_tools import search_knowledge_base
+        with patch("tools.knowledge_tools._get_kb", return_value=kb):
+            from tools.knowledge_tools import search_knowledge_base
             result = search_knowledge_base("test query")
             assert "empty" in result.lower()
 
     def test_add_kb_tool_delegates(self, kb, sample_txt):
-        with patch("sidekick_tools._get_kb", return_value=kb):
-            with patch("sidekick_tools.os.path.join", return_value=sample_txt):
-                from sidekick_tools import add_to_knowledge_base
+        with patch("tools.knowledge_tools._get_kb", return_value=kb):
+            with patch("tools.knowledge_tools.os.path.join", return_value=sample_txt):
+                from tools.knowledge_tools import add_to_knowledge_base
                 result = add_to_knowledge_base("notes.txt")
                 assert "Indexed" in result
 
     def test_list_kb_tool_delegates(self, kb):
-        with patch("sidekick_tools._get_kb", return_value=kb):
-            from sidekick_tools import list_knowledge_base
+        with patch("tools.knowledge_tools._get_kb", return_value=kb):
+            from tools.knowledge_tools import list_knowledge_base
             result = list_knowledge_base()
             assert "empty" in result.lower()
 
     def test_remove_kb_tool_delegates(self, kb):
-        with patch("sidekick_tools._get_kb", return_value=kb):
-            from sidekick_tools import remove_from_knowledge_base
+        with patch("tools.knowledge_tools._get_kb", return_value=kb):
+            from tools.knowledge_tools import remove_from_knowledge_base
             result = remove_from_knowledge_base("nonexistent.txt")
             assert "No indexed chunks" in result
 
     def test_reindex_kb_tool_delegates(self, kb):
-        with patch("sidekick_tools._get_kb", return_value=kb):
-            from sidekick_tools import reindex_knowledge_base
+        with patch("tools.knowledge_tools._get_kb", return_value=kb):
+            from tools.knowledge_tools import reindex_knowledge_base
             result = reindex_knowledge_base()
             assert "No supported files" in result
