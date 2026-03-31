@@ -4,9 +4,10 @@ import os
 import requests
 
 from langchain_core.tools import Tool, StructuredTool
-from langchain_experimental.tools import PythonREPLTool
 
+from config import SANDBOX_DIR
 from scheduler import schedule_task, list_scheduled_tasks, cancel_scheduled_task
+from tools.docker_repl import DockerPythonREPL
 
 
 PUSHOVER_URL = "https://api.pushover.net/1/messages.json"
@@ -28,7 +29,7 @@ def get_tools():
         description="Send a push notification to alert the user.",
     )
 
-    python_repl = PythonREPLTool()
+    python_repl = DockerPythonREPL(sandbox_dir=SANDBOX_DIR)
 
     schedule_task_tool = StructuredTool.from_function(
         func=schedule_task,

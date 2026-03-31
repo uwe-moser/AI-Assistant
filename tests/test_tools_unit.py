@@ -387,27 +387,109 @@ class TestArxiv:
 # ===================================================================
 
 class TestPythonRepl:
-    """Tests for the PythonREPLTool."""
+    """Tests for the DockerPythonREPL (Docker-sandboxed)."""
 
-    def test_repl_executes_code(self):
-        from langchain_experimental.tools import PythonREPLTool
-        repl = PythonREPLTool()
+    def _make_repl(self):
+        from tools.docker_repl import DockerPythonREPL
+        return DockerPythonREPL(sandbox_dir="sandbox")
+
+    @patch("tools.docker_repl.docker")
+    def test_repl_executes_code(self, mock_docker):
+        mock_client = MagicMock()
+        mock_docker.from_env.return_value = mock_client
+        mock_client.images.get.return_value = True  # image exists
+        mock_client.containers.run.return_value = b"4\n"
+
+        repl = self._make_repl()
         result = repl.run("print(2 + 2)")
         assert "4" in result
+        mock_client.containers.run.assert_called_once()
 
-    def test_repl_handles_syntax_error(self):
-        from langchain_experimental.tools import PythonREPLTool
-        repl = PythonREPLTool()
+    @patch("tools.docker_repl.docker")
+    def test_repl_handles_syntax_error(self, mock_docker):
+        from docker.errors import ContainerError
+
+        mock_client = MagicMock()
+        mock_docker.from_env.return_value = mock_client
+        mock_client.images.get.return_value = True
+        mock_client.containers.run.side_effect = ContainerError(
+            container="test", exit_status=1, command="python3",
+            image="sandbox",
+            stderr=b"SyntaxError: unexpected EOF while parsing",
+        )
+
+        repl = self._make_repl()
         result = repl.run("def bad(")
-        assert "Error" in result or "SyntaxError" in result
+        assert "SyntaxError" in result
 
-    def test_repl_multiline_output(self):
-        from langchain_experimental.tools import PythonREPLTool
-        repl = PythonREPLTool()
+    @patch("tools.docker_repl.docker")
+    def test_repl_multiline_output(self, mock_docker):
+        mock_client = MagicMock()
+        mock_docker.from_env.return_value = mock_client
+        mock_client.images.get.return_value = True
+        mock_client.containers.run.return_value = b"0\n1\n2\n"
+
+        repl = self._make_repl()
         result = repl.run("for i in range(3): print(i)")
         assert "0" in result
         assert "1" in result
         assert "2" in result
+
+    @patch("tools.docker_repl.docker")
+    def test_network_is_disabled(self, mock_docker):
+        """Container should run with network_disabled=True."""
+        mock_client = MagicMock()
+        mock_docker.from_env.return_value = mock_client
+        mock_client.images.get.return_value = True
+        mock_client.containers.run.return_value = b""
+
+        repl = self._make_repl()
+        repl.run("print('hi')")
+
+        _, kwargs = mock_client.containers.run.call_args
+        assert kwargs["network_disabled"] is True
+
+    @patch("tools.docker_repl.docker")
+    def test_container_is_removed_after_run(self, mock_docker):
+        """Container should be ephemeral (remove=True)."""
+        mock_client = MagicMock()
+        mock_docker.from_env.return_value = mock_client
+        mock_client.images.get.return_value = True
+        mock_client.containers.run.return_value = b""
+
+        repl = self._make_repl()
+        repl.run("pass")
+
+        _, kwargs = mock_client.containers.run.call_args
+        assert kwargs["remove"] is True
+
+    @patch("tools.docker_repl.docker")
+    def test_mem_limit_is_set(self, mock_docker):
+        mock_client = MagicMock()
+        mock_docker.from_env.return_value = mock_client
+        mock_client.images.get.return_value = True
+        mock_client.containers.run.return_value = b""
+
+        repl = self._make_repl()
+        repl.run("pass")
+
+        _, kwargs = mock_client.containers.run.call_args
+        assert kwargs["mem_limit"] == "256m"
+
+    @patch("tools.docker_repl.docker")
+    def test_builds_image_when_missing(self, mock_docker):
+        from docker.errors import ImageNotFound
+
+        mock_client = MagicMock()
+        mock_docker.from_env.return_value = mock_client
+        mock_client.images.get.side_effect = ImageNotFound("not found")
+        mock_client.images.build.return_value = (MagicMock(), [])
+        mock_client.containers.run.return_value = b"ok"
+
+        repl = self._make_repl()
+        repl.run("print('ok')")
+
+        mock_client.images.build.assert_called_once()
 
 
 # ===================================================================

@@ -48,7 +48,7 @@ User input (task + optional success criteria)
 | **Documents** | File management, PDFs, spreadsheets, charts | File I/O, PDF read/create, CSV/Excel, matplotlib charts |
 | **Knowledge** | Search and manage personal document collection | ChromaDB semantic search, document indexing |
 | **Location** | Address analysis, nearby amenities, commute times | Google Places, Maps, apartment search |
-| **System** | Task scheduling, notifications, Python execution | APScheduler, Pushover, Python REPL |
+| **System** | Task scheduling, notifications, Python execution | APScheduler, Pushover, Docker-sandboxed Python REPL |
 
 ### Persistent memory
 
@@ -93,7 +93,7 @@ User input (task + optional success criteria)
 - **Interactive map** — generates a Leaflet/OpenStreetMap HTML map with color-coded markers for home, amenities, and work locations
 
 ### Code & Computation
-- **Python execution** — run sandboxed Python code for calculations, data processing, or scripting
+- **Python execution** — run Python code in a Docker-sandboxed container for calculations, data processing, or scripting. Each execution spins up an ephemeral container with network disabled, memory limits, and CPU caps — the host machine is never exposed to arbitrary code.
 
 ### Task Scheduling
 - **Schedule tasks** — set up recurring background jobs with cron expressions (e.g. "check the news every morning at 8 AM")
@@ -108,6 +108,7 @@ User input (task + optional success criteria)
 
 - Python 3.12+
 - [uv](https://github.com/astral-sh/uv) package manager
+- [Docker](https://docs.docker.com/get-docker/) (required for the sandboxed Python REPL)
 - A Chromium-compatible browser (installed automatically by Playwright)
 
 ### Install dependencies
@@ -116,6 +117,16 @@ User input (task + optional success criteria)
 uv sync
 playwright install chromium
 ```
+
+### Build the Python sandbox image
+
+The sandboxed Python REPL runs code inside an ephemeral Docker container. Build the image once:
+
+```bash
+docker build -f Dockerfile.python-sandbox -t apexflow-python-sandbox .
+```
+
+The image is also auto-built on first REPL invocation if it doesn't exist, but pre-building avoids the initial delay.
 
 ### Configure API keys
 
@@ -224,9 +235,11 @@ AI-Assistant/
 │   ├── research.py      # Web search, Wikipedia, arXiv, YouTube transcripts
 │   ├── browser.py       # Playwright browser automation factory
 │   ├── documents.py     # File I/O, PDF read/create, spreadsheets, charts
+│   ├── docker_repl.py   # Docker-sandboxed Python REPL (BaseTool)
 │   ├── knowledge_tools.py  # Knowledge base search, indexing, management
 │   ├── location.py      # Google Places, apartment search (conditional)
 │   └── system.py        # Push notifications, Python REPL, task scheduling
+├── Dockerfile.python-sandbox  # Docker image for sandboxed Python execution
 ├── apartment_search.py  # Apartment analysis: amenities, commute, map
 ├── knowledge.py         # Knowledge base: chunking, embedding, ChromaDB
 ├── scheduler.py         # Task scheduling: SQLite + APScheduler
@@ -253,6 +266,8 @@ AI-Assistant/
 | [config.py](config.py) | Centralizes all constants (DB paths, model name, sandbox dir) and loads `.env` |
 | [agents/base.py](agents/base.py) | `BaseAgent` class using `create_react_agent` with async `run()` method |
 | [tools/](tools/) | Domain-specific tool modules, each with a `get_tools()` function |
+| [tools/docker_repl.py](tools/docker_repl.py) | `DockerPythonREPL`: executes Python in ephemeral Docker containers with resource limits |
+| [Dockerfile.python-sandbox](Dockerfile.python-sandbox) | Lightweight Python 3.12 image used by the sandboxed REPL |
 | [apartment_search.py](apartment_search.py) | Finds nearby family amenities with walking times, calculates commute, generates interactive map |
 | [knowledge.py](knowledge.py) | Document chunking, OpenAI embedding, ChromaDB vector storage, semantic search |
 | [scheduler.py](scheduler.py) | SQLite-backed task scheduling with cron expressions; persists tasks, validates cron, tracks results |
@@ -279,7 +294,7 @@ AI-Assistant/
 | Task scheduling | [APScheduler](https://apscheduler.readthedocs.io/) with SQLite persistence |
 | Notifications | [Pushover](https://pushover.net/) |
 | Persistence | SQLite (sessions, chat history, user profile, checkpoints) |
-| Code execution | LangChain PythonREPLTool (sandboxed) |
+| Code execution | Docker-sandboxed Python REPL (ephemeral containers, network-disabled, resource-limited) |
 | Observability | LangSmith |
 | Package management | [uv](https://github.com/astral-sh/uv) |
 
