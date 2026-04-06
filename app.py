@@ -89,6 +89,27 @@ def do_rename_session(session_id, name):
     return gr.Dropdown(choices=get_dropdown_choices(), value=session_id)
 
 
+async def delete_and_switch(session_id, old_sidekick):
+    """Delete the current session and switch to another."""
+    free_resources(old_sidekick)
+    session_manager.delete_session(session_id)
+
+    new_session_id = session_manager.get_or_create_latest()
+    sidekick = Sidekick(session_id=new_session_id)
+    await sidekick.setup()
+    history = get_history_for_session(new_session_id)
+    choices = get_dropdown_choices()
+    session_info = session_manager.get_session(new_session_id)
+    session_name = session_info["name"] if session_info else ""
+    return (
+        sidekick,
+        new_session_id,
+        history,
+        gr.Dropdown(choices=choices, value=new_session_id),
+        session_name,
+    )
+
+
 async def reset(session_id, old_sidekick):
     free_resources(old_sidekick)
     sidekick = Sidekick(session_id=session_id)
@@ -264,7 +285,9 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
                     choices=[],
                     interactive=True,
                 )
-                new_session_btn = gr.Button("+ New Session", variant="primary", elem_id="new-session-btn")
+                with gr.Row():
+                    new_session_btn = gr.Button("+ New Session", variant="primary", elem_id="new-session-btn")
+                    delete_session_btn = gr.Button("Delete Session", variant="stop", elem_id="delete-session-btn")
             with gr.Column(scale=3):
                 session_name_input = gr.Textbox(
                     label="Current Session",
@@ -350,6 +373,13 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
         do_rename_session,
         inputs=[current_session_id, session_name_input],
         outputs=[session_dropdown],
+    )
+
+    delete_session_btn.click(
+        delete_and_switch,
+        inputs=[current_session_id, sidekick],
+        outputs=[sidekick, current_session_id, chatbot, session_dropdown, session_name_input],
+        js="(session_id, sidekick) => { if (!confirm('Delete this session permanently?')) throw new Error('Cancelled'); return [session_id, sidekick]; }",
     )
 
     message.submit(

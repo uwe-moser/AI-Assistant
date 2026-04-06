@@ -96,6 +96,7 @@ class Sidekick:
         self.user_profile = UserProfile()
         self.browser_agent = None
         self._agents: Dict[str, Any] = {}
+        self._agent_context: str = ""
 
     async def setup(self, include_browser=True):
         self._db_conn = await aiosqlite.connect(CHECKPOINTS_DB_PATH)
@@ -158,10 +159,13 @@ class Sidekick:
 
         tools = []
         for name, agent in self._agents.items():
+            async def _run_with_context(task: str, _agent=agent) -> str:
+                return await _agent.run(task, context=self._agent_context)
+
             tools.append(Tool(
                 name=f"{name}_agent",
-                func=lambda *args, **kwargs: None,
-                coroutine=agent.run,
+                func=None,
+                coroutine=_run_with_context,
                 description=agent_descriptions[name],
             ))
         return tools
@@ -203,7 +207,7 @@ Do NOT invent facts. Return an empty list if nothing new is learned.
 User said: {user_message}
 Assistant replied: {assistant_reply[:500]}"""
 
-        result = extractor_llm.invoke([HumanMessage(content=prompt)])
+        result = await extractor_llm.ainvoke([HumanMessage(content=prompt)])
         for fact in result.facts:
             self.user_profile.upsert(fact.key, fact.value)
 
@@ -218,8 +222,9 @@ Assistant replied: {assistant_reply[:500]}"""
             lines.append(f"- {tool.name}: {tool.description}")
         return "\n".join(lines)
 
-    def worker(self, state: State) -> Dict[str, Any]:
+    async def worker(self, state: State) -> Dict[str, Any]:
         memory_context = self._get_memory_context()
+        self._agent_context = memory_context
 
         system_message = f"""You are an orchestrator that delegates tasks to specialized agents.
 The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -228,9 +233,11 @@ The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 You have these specialist agents available:
 {self._build_agent_list()}
 
-Delegate tasks to the right agent by calling them with a clear, specific instruction.
-You can call multiple agents in sequence to complete complex tasks.
-When an agent returns results, synthesize them into a clear response for the user.
+DELEGATION GUIDELINES:
+- Delegate tasks to the right agent by calling them with a clear, specific instruction.
+- When a user request involves INDEPENDENT sub-tasks, call multiple agents in PARALLEL by including multiple tool calls in a single response.
+- When tasks are DEPENDENT (one needs the result of another), call them sequentially.
+- When an agent returns results, synthesize them into a clear response for the user.
 
 If you need clarification from the user, ask directly without calling any agent.
 """
@@ -254,7 +261,7 @@ Please continue working to meet the criteria or ask the user for clarification."
         if not any(isinstance(m, SystemMessage) for m in state["messages"]):
             messages = [SystemMessage(content=system_message)] + messages
 
-        response = self.worker_llm_with_tools.invoke(messages)
+        response = await self.worker_llm_with_tools.ainvoke(messages)
         return {"messages": [response]}
 
     def worker_router(self, state: State) -> str:
@@ -276,7 +283,7 @@ Please continue working to meet the criteria or ask the user for clarification."
                 conversation += f"Assistant: {text}\n"
         return conversation
 
-    def evaluator(self, state: State) -> State:
+    async def evaluator(self, state: State) -> State:
         last_response = state["messages"][-1].content
 
         system_message = """You are an evaluator that determines if a task has been completed successfully by an Assistant.
@@ -309,7 +316,7 @@ But reject if you feel that more work should go into this.
             HumanMessage(content=user_message),
         ]
 
-        eval_result = self.evaluator_llm_with_output.invoke(evaluator_messages)
+        eval_result = await self.evaluator_llm_with_output.ainvoke(evaluator_messages)
         return {
             "messages": [
                 {"role": "assistant", "content": f"Evaluator Feedback: {eval_result.feedback}"}
@@ -373,52 +380,76 @@ But reject if you feel that more work should go into this.
         yield history
 
         worker_reply_content = ""
-        evaluator_feedback_content = ""
+        current_assistant_msg = None
 
-        async for chunk in self.graph.astream(state, config=config):
-            for node_name, node_output in chunk.items():
-                if node_name == "worker":
-                    ai_msg = node_output["messages"][-1]
-                    if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
-                        for tc in ai_msg.tool_calls:
-                            args_summary = ", ".join(
-                                f"{k}={repr(v)[:80]}" for k, v in tc["args"].items()
-                            )
-                            tool_msg = {
-                                "role": "assistant",
-                                "content": f"**{tc['name']}**({args_summary})",
-                                "metadata": {"title": f"\U0001f916 Delegating to: {tc['name']}"},
-                            }
-                            history = history + [tool_msg]
+        async for stream_mode, chunk in self.graph.astream(
+            state, config=config, stream_mode=["messages", "updates"]
+        ):
+            if stream_mode == "messages":
+                msg_chunk, metadata = chunk
+                # Stream tokens from the worker node's LLM
+                if metadata.get("langgraph_node") == "worker":
+                    # Skip tool call chunks (not user-visible text)
+                    if hasattr(msg_chunk, "tool_call_chunks") and msg_chunk.tool_call_chunks:
+                        continue
+
+                    token = msg_chunk.content if hasattr(msg_chunk, "content") else ""
+                    if token:
+                        if current_assistant_msg is None:
+                            current_assistant_msg = {"role": "assistant", "content": token}
+                            history = history + [current_assistant_msg]
+                        else:
+                            current_assistant_msg["content"] += token
+                            # Force Gradio to detect the change
+                            history = list(history)
+                            history[-1] = dict(current_assistant_msg)
                         yield history
-                    else:
-                        worker_reply_content = ai_msg.content
 
-                elif node_name == "tools":
-                    for tool_result in node_output["messages"]:
-                        content = tool_result.content if hasattr(tool_result, "content") else str(tool_result)
-                        truncated = content[:500] + ("..." if len(content) > 500 else "")
-                        tool_name = tool_result.name if hasattr(tool_result, "name") else "agent"
-                        result_msg = {
-                            "role": "assistant",
-                            "content": truncated,
-                            "metadata": {"title": f"\U0001f4cb Result: {tool_name}"},
-                        }
-                        history = history + [result_msg]
-                    yield history
+            elif stream_mode == "updates":
+                for node_name, node_output in chunk.items():
+                    if node_name == "worker":
+                        ai_msg = node_output["messages"][-1]
+                        if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
+                            # Tool calls — show delegation messages
+                            current_assistant_msg = None
+                            for tc in ai_msg.tool_calls:
+                                args_summary = ", ".join(
+                                    f"{k}={repr(v)[:80]}" for k, v in tc["args"].items()
+                                )
+                                tool_msg = {
+                                    "role": "assistant",
+                                    "content": f"**{tc['name']}**({args_summary})",
+                                    "metadata": {"title": f"\U0001f916 Delegating to: {tc['name']}"},
+                                }
+                                history = history + [tool_msg]
+                            yield history
+                        else:
+                            # Final worker response (already streamed via "messages" mode)
+                            worker_reply_content = ai_msg.content
+                            current_assistant_msg = None
 
-                elif node_name == "evaluator":
-                    evaluator_feedback_content = node_output["messages"][-1]["content"] if node_output.get("messages") else ""
+                    elif node_name == "tools":
+                        for tool_result in node_output["messages"]:
+                            content = tool_result.content if hasattr(tool_result, "content") else str(tool_result)
+                            truncated = content[:500] + ("..." if len(content) > 500 else "")
+                            tool_name = tool_result.name if hasattr(tool_result, "name") else "agent"
+                            result_msg = {
+                                "role": "assistant",
+                                "content": truncated,
+                                "metadata": {"title": f"\U0001f4cb Result: {tool_name}"},
+                            }
+                            history = history + [result_msg]
+                        yield history
 
-        if worker_reply_content:
-            reply = {"role": "assistant", "content": worker_reply_content}
-            history = history + [reply]
-            yield history
-
-        if evaluator_feedback_content:
-            feedback = {"role": "assistant", "content": evaluator_feedback_content}
-            history = history + [feedback]
-            yield history
+                    elif node_name == "evaluator":
+                        eval_msgs = node_output.get("messages", [])
+                        if eval_msgs:
+                            last_eval = eval_msgs[-1]
+                            content = last_eval.get("content", "") if isinstance(last_eval, dict) else ""
+                            if content:
+                                feedback = {"role": "assistant", "content": content}
+                                history = history + [feedback]
+                                yield history
 
         # Persist to long-term memory
         if worker_reply_content:

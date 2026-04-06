@@ -21,12 +21,19 @@ class BaseAgent:
         llm = ChatOpenAI(model=DEFAULT_MODEL)
         self._graph = create_react_agent(llm, tools)
 
-    async def run(self, task: str) -> str:
+    async def run(self, task: str, context: str = "") -> str:
         """Execute *task* using this agent's tool set and return the result."""
-        result = await self._graph.ainvoke({
-            "messages": [
-                SystemMessage(content=self.system_prompt),
-                HumanMessage(content=task),
-            ]
-        })
-        return result["messages"][-1].content
+        system_content = self.system_prompt
+        if context:
+            system_content += f"\n\nContext from the orchestrator:\n{context}"
+
+        try:
+            result = await self._graph.ainvoke({
+                "messages": [
+                    SystemMessage(content=system_content),
+                    HumanMessage(content=task),
+                ]
+            })
+            return result["messages"][-1].content
+        except Exception as e:
+            return f"Error: Agent failed - {type(e).__name__}: {e}"

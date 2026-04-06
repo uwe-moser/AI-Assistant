@@ -21,6 +21,7 @@ _DOCKERFILE = os.getenv(
 )
 _TIMEOUT = int(os.getenv("REPL_TIMEOUT", "30"))  # seconds
 _MEM_LIMIT = os.getenv("REPL_MEM_LIMIT", "256m")
+_MAX_OUTPUT = 50_000  # max characters returned to the agent
 
 
 def _ensure_image(client: docker.DockerClient, image: str, dockerfile: str) -> None:
@@ -50,7 +51,9 @@ class DockerPythonREPL(BaseTool):
     description: str = (
         "A Python shell. Use this to execute python commands. "
         "Input should be a valid python command. "
-        "If you want to see the output of a value, you should print it out with `print(...)`."
+        "If you want to see the output of a value, you should print it out with `print(...)`. "
+        "The sandbox directory is mounted read-only at /home/sandbox/data. "
+        "Use /tmp for any temporary file writes."
     )
 
     image: str = _IMAGE_NAME
@@ -78,7 +81,7 @@ class DockerPythonREPL(BaseTool):
         volumes = {}
         if self.sandbox_dir:
             abs_sandbox = os.path.abspath(self.sandbox_dir)
-            volumes[abs_sandbox] = {"bind": "/home/sandbox/data", "mode": "rw"}
+            volumes[abs_sandbox] = {"bind": "/home/sandbox/data", "mode": "ro"}
 
         try:
             output = client.containers.run(
@@ -93,15 +96,22 @@ class DockerPythonREPL(BaseTool):
                 nano_cpus=int(1e9),  # 1 CPU core
                 pids_limit=64,
                 volumes=volumes,
+                tmpfs={"/tmp": "size=64m"},
                 timeout=self.timeout,
             )
-            return output.decode("utf-8", errors="replace").strip()
+            decoded = output.decode("utf-8", errors="replace").strip()
+            if len(decoded) > _MAX_OUTPUT:
+                return decoded[:_MAX_OUTPUT] + "\n\n[Output truncated at 50 000 chars]"
+            return decoded
         except ContainerError as exc:
             # stderr from a non-zero exit code
             stderr = exc.stderr
             if isinstance(stderr, bytes):
                 stderr = stderr.decode("utf-8", errors="replace")
-            return stderr.strip()
+            stderr = stderr.strip()
+            if len(stderr) > _MAX_OUTPUT:
+                return stderr[:_MAX_OUTPUT] + "\n\n[Stderr truncated at 50 000 chars]"
+            return stderr
         except APIError as exc:
             return f"Error: Docker API error — {exc.explanation}"
         except Exception as exc:
