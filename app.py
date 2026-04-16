@@ -6,7 +6,9 @@ from sidekick import Sidekick
 from session_manager import SessionManager
 from scheduler import _list_tasks, _remove_task, TaskRunner
 from knowledge import KnowledgeBase
-from config import DB_PATH
+from config import DB_PATH, SANDBOX_DIR
+import jobs
+import interview
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -189,6 +191,81 @@ def load_knowledge_base_docs():
     return [[source, str(count)] for source, count in sorted(doc_chunks.items())]
 
 
+# ── Job search panel helpers ─────────────────────────────────────────────────
+
+def load_jobs_table(status_filter: str = "all"):
+    """Return job pipeline rows for the Dataframe."""
+    status = None if status_filter == "all" else status_filter
+    rows = jobs.list_jobs(status=status, limit=100)
+    return [
+        [
+            j["id"],
+            j["status"],
+            f"{j['match_score']:.0f}" if j.get("match_score") is not None else "—",
+            j["title"] or "",
+            j["company"] or "",
+            j["location"] or "",
+            j["apply_url"] or "",
+        ]
+        for j in rows
+    ]
+
+
+def load_interview_sessions_table():
+    """Return interview session rows for the Dataframe."""
+    sessions = interview.list_sessions()
+    rows = []
+    for s in sessions:
+        turns = interview.get_turns(s["id"])
+        answered = sum(1 for t in turns if t.get("answer"))
+        rows.append([
+            s["id"],
+            s["status"],
+            s.get("title") or "",
+            f"{answered}/{len(turns)}",
+            f"{s['overall_score']:.0f}" if s.get("overall_score") is not None else "—",
+            s.get("created_at", ""),
+        ])
+    return rows
+
+
+def upload_application_sources(files):
+    """Copy uploaded CV/LinkedIn PDFs to the sandbox root."""
+    if not files:
+        return "No files selected."
+    import shutil as _shutil
+    os.makedirs(SANDBOX_DIR, exist_ok=True)
+    names = []
+    for file_path in files:
+        filename = os.path.basename(file_path)
+        dest = os.path.join(SANDBOX_DIR, filename)
+        _shutil.copy2(file_path, dest)
+        names.append(filename)
+    return (
+        f"Uploaded to {SANDBOX_DIR}/: " + ", ".join(names) +
+        ". Now ask the assistant: 'Ingest my CV and LinkedIn profile' "
+        "(referencing these filenames)."
+    )
+
+
+def show_profile_summary():
+    """Return a concise summary of the stored candidate profile."""
+    profile = jobs.get_profile()
+    if not profile:
+        return "No candidate profile stored yet. Upload a CV + LinkedIn PDF above and ask the assistant to ingest them."
+    import json as _json
+    lines = [f"Top-level keys: {', '.join(profile.keys())}"]
+    if "name" in profile:
+        lines.append(f"Name: {profile['name']}")
+    if "summary" in profile:
+        lines.append(f"Summary: {str(profile['summary'])[:300]}")
+    if "experience" in profile and isinstance(profile["experience"], list):
+        lines.append(f"Experience entries: {len(profile['experience'])}")
+    if "skills" in profile:
+        lines.append(f"Skills: {_json.dumps(profile['skills'], ensure_ascii=False)[:300]}")
+    return "\n".join(lines)
+
+
 with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) as ui:
     gr.HTML(f"""
 <div style="display: flex; align-items: center; gap: 24px; margin-bottom: 4px; width: 100%;">
@@ -266,6 +343,18 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
       <div class="agent-tools">Tools: APScheduler, Pushover, Python REPL</div>
     </div>
 
+    <div class="agent-card">
+      <div class="agent-name">Job Search Agent</div>
+      Find jobs, manage CV profile, tailor applications (discover-only)
+      <div class="agent-tools">Tools: Adzuna, Serper, ranking, CV/cover-letter tailoring</div>
+    </div>
+
+    <div class="agent-card">
+      <div class="agent-name">Interview Coach</div>
+      Run mock interviews tied to a specific job, score answers
+      <div class="agent-tools">Tools: question planning, per-answer scoring, summary</div>
+    </div>
+
   </div>
 </div>
 """)
@@ -326,6 +415,61 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
         with gr.Row():
             kb_status = gr.Textbox(label="Status", interactive=False, scale=3)
             kb_reindex_btn = gr.Button("Re-index", variant="secondary", scale=1)
+
+    # Job Search panel (discover-only)
+    with gr.Accordion("Job Search", open=False):
+        gr.Markdown(
+            "**Discover-only.** The assistant finds and ranks jobs, and prepares "
+            "tailored CVs/cover letters in `sandbox/job_applications/<job_id>/`. "
+            "It never submits anything — you click apply manually."
+        )
+        with gr.Row():
+            profile_upload = gr.File(
+                label="Upload CV and LinkedIn profile PDFs",
+                file_count="multiple",
+                file_types=[".pdf"],
+                scale=3,
+            )
+            profile_status = gr.Textbox(label="Upload status", interactive=False, scale=2)
+        with gr.Row():
+            profile_summary = gr.Textbox(
+                label="Current candidate profile",
+                interactive=False,
+                lines=6,
+                scale=3,
+            )
+            refresh_profile_btn = gr.Button("Refresh profile", variant="secondary", scale=1)
+
+        with gr.Row():
+            jobs_status_filter = gr.Dropdown(
+                label="Filter by status",
+                choices=["all"] + list(jobs.PIPELINE_STATUSES),
+                value="all",
+                scale=1,
+            )
+            refresh_jobs_btn = gr.Button("Refresh jobs", variant="secondary", scale=1)
+        jobs_table = gr.Dataframe(
+            headers=["ID", "Status", "Score", "Title", "Company", "Location", "Apply URL"],
+            datatype=["str", "str", "str", "str", "str", "str", "str"],
+            interactive=False,
+            label="Job pipeline",
+            wrap=True,
+        )
+
+    # Interview practice panel
+    with gr.Accordion("Interview Practice", open=False):
+        gr.Markdown(
+            "Ask the assistant to **start an interview for job [id]** to begin a "
+            "practice session. It runs in the chat above — answers are scored here."
+        )
+        refresh_interviews_btn = gr.Button("Refresh sessions", variant="secondary")
+        interviews_table = gr.Dataframe(
+            headers=["Session", "Status", "Title", "Answered", "Overall", "Created"],
+            datatype=["str", "str", "str", "str", "str", "str"],
+            interactive=False,
+            label="Interview sessions",
+            wrap=True,
+        )
 
     # Chat
     with gr.Row():
@@ -426,5 +570,24 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
         outputs=[kb_status, kb_docs_table],
     )
 
+    # Job search panel wiring
+    ui.load(lambda: load_jobs_table("all"), inputs=[], outputs=[jobs_table])
+    ui.load(show_profile_summary, inputs=[], outputs=[profile_summary])
+    profile_upload.upload(
+        upload_application_sources,
+        inputs=[profile_upload],
+        outputs=[profile_status],
+    )
+    refresh_profile_btn.click(show_profile_summary, inputs=[], outputs=[profile_summary])
+    refresh_jobs_btn.click(load_jobs_table, inputs=[jobs_status_filter], outputs=[jobs_table])
+    jobs_status_filter.change(load_jobs_table, inputs=[jobs_status_filter], outputs=[jobs_table])
 
-ui.launch(inbrowser=True)
+    # Interview practice panel wiring
+    ui.load(load_interview_sessions_table, inputs=[], outputs=[interviews_table])
+    refresh_interviews_btn.click(
+        load_interview_sessions_table, inputs=[], outputs=[interviews_table]
+    )
+
+
+if __name__ == "__main__":
+    ui.launch(inbrowser=True)

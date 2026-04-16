@@ -31,12 +31,16 @@ from agents.documents import DocumentsAgent
 from agents.knowledge import KnowledgeAgent
 from agents.location import LocationAgent
 from agents.system import SystemAgent
+from agents.jobsearch import JobSearchAgent
+from agents.interview import InterviewCoachAgent
 
 from tools.research import get_tools as get_research_tools
 from tools.documents import get_tools as get_documents_tools
 from tools.knowledge_tools import get_tools as get_knowledge_tools
 from tools.location import get_tools as get_location_tools
 from tools.system import get_tools as get_system_tools
+from tools.jobsearch import get_tools as get_jobsearch_tools
+from tools.interview import get_tools as get_interview_tools
 
 import uuid
 import aiosqlite
@@ -107,6 +111,8 @@ class Sidekick:
         self._agents["documents"] = DocumentsAgent(get_documents_tools())
         self._agents["knowledge"] = KnowledgeAgent(get_knowledge_tools())
         self._agents["system"] = SystemAgent(get_system_tools())
+        self._agents["jobsearch"] = JobSearchAgent(get_jobsearch_tools())
+        self._agents["interview"] = InterviewCoachAgent(get_interview_tools())
 
         location_tools = get_location_tools()
         if location_tools:
@@ -154,6 +160,19 @@ class Sidekick:
             "system": (
                 "System specialist: schedule recurring background tasks with cron expressions, "
                 "send push notifications, list/cancel scheduled tasks, and run Python code."
+            ),
+            "jobsearch": (
+                "Job search specialist (DISCOVER-ONLY — never submits applications): search jobs "
+                "via Adzuna/Serper, manage the candidate profile (parsed from CV/LinkedIn PDFs), "
+                "rank jobs against the profile, generate tailored CVs and cover letters, and "
+                "record application form requirements. For LinkedIn/Stepstone URLs the jobsearch "
+                "agent returns, delegate to the browser agent to visit the page and inspect the "
+                "form fields, then hand the extracted fields back to jobsearch to save them."
+            ),
+            "interview": (
+                "Interview coach: runs mock interviews tied to a specific job in the pipeline, "
+                "scores each answer, and produces an aggregate summary. Use this when the user "
+                "wants to practice for a real interview."
             ),
         }
 
