@@ -1,65 +1,35 @@
-from playwright.async_api import async_playwright
-from langchain_community.agent_toolkits import PlayWrightBrowserToolkit
-from dotenv import load_dotenv
+"""Document and file tools: file management, PDF, spreadsheets, charts."""
+
 import os
 import json
 import csv
-import io
-import requests
-from langchain_core.tools import Tool, StructuredTool
-from langchain_community.agent_toolkits import FileManagementToolkit
-from langchain_community.tools.wikipedia.tool import WikipediaQueryRun
-from langchain_experimental.tools import PythonREPLTool
-from langchain_community.utilities import GoogleSerperAPIWrapper
-from langchain_community.utilities.wikipedia import WikipediaAPIWrapper
-from langchain_community.tools.arxiv.tool import ArxivQueryRun
-from langchain_community.utilities.arxiv import ArxivAPIWrapper
-from langchain_google_community import GooglePlacesTool
-from pypdf import PdfReader
-from youtube_transcript_api import YouTubeTranscriptApi
-import html as html_module
 import re
 import subprocess
 import sys
 import tempfile
+import html as html_module
+
+from langchain_core.tools import Tool
+from langchain_community.agent_toolkits import FileManagementToolkit
+from pypdf import PdfReader
 from fpdf import FPDF
 import openpyxl
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from scheduler import schedule_task, list_scheduled_tasks, cancel_scheduled_task
-from knowledge import KnowledgeBase
-from apartment_search import apartment_search
 
-
-
-load_dotenv(override=True)
-pushover_token = os.getenv("PUSHOVER_TOKEN")
-pushover_user = os.getenv("PUSHOVER_USER")
-pushover_url = "https://api.pushover.net/1/messages.json"
-serper = GoogleSerperAPIWrapper()
-
-async def playwright_tools():
-    playwright = await async_playwright().start()
-    browser = await playwright.chromium.launch(headless=False)
-    toolkit = PlayWrightBrowserToolkit.from_browser(async_browser=browser)
-    return toolkit.get_tools(), browser, playwright
-
-
-def push(text: str):
-    """Send a push notification to the user"""
-    requests.post(pushover_url, data = {"token": pushover_token, "user": pushover_user, "message": text})
-    return "success"
+from config import SANDBOX_DIR
 
 
 def get_file_tools():
-    toolkit = FileManagementToolkit(root_dir="sandbox")
+    """Return LangChain file management tools rooted in the sandbox."""
+    toolkit = FileManagementToolkit(root_dir=SANDBOX_DIR)
     return toolkit.get_tools()
 
 
 def read_pdf(file_path: str) -> str:
     """Read text content from a PDF file in the sandbox directory."""
-    full_path = os.path.join("sandbox", file_path)
+    full_path = os.path.join(SANDBOX_DIR, file_path)
     if not os.path.isfile(full_path):
         return f"Error: file not found at {full_path}"
     reader = PdfReader(full_path)
@@ -128,7 +98,7 @@ def _create_pdf_playwright(html_content: str, full_path: str) -> str | None:
 
         if result.returncode != 0:
             return result.stderr[-500:]
-        return None  # success
+        return None
     except Exception as e:
         return str(e)
     finally:
@@ -148,7 +118,6 @@ def _sanitize_for_fpdf(text: str) -> str:
     }
     for char, repl in replacements.items():
         text = text.replace(char, repl)
-    # Drop any remaining non-latin1 characters to avoid fpdf crashes
     return text.encode("latin-1", errors="replace").decode("latin-1")
 
 
@@ -175,7 +144,7 @@ def _create_pdf_fpdf(title: str, content: str, full_path: str) -> str | None:
                 pdf.multi_cell(0, 7, paragraph)
 
         pdf.output(full_path)
-        return None  # success
+        return None
     except Exception as e:
         return str(e)
 
@@ -197,43 +166,26 @@ def create_pdf(input: str) -> str:
     if not filename.endswith(".pdf"):
         filename += ".pdf"
 
-    full_path = os.path.join("sandbox", filename)
-    os.makedirs("sandbox", exist_ok=True)
+    full_path = os.path.join(SANDBOX_DIR, filename)
+    os.makedirs(SANDBOX_DIR, exist_ok=True)
 
-    # Try Playwright/Chromium first (best quality, full Unicode support)
     html_content = _content_to_html(title, content)
     pw_error = _create_pdf_playwright(html_content, full_path)
     if pw_error is None:
-        return f"PDF successfully created at sandbox/{filename}"
+        return f"PDF successfully created at {SANDBOX_DIR}/{filename}"
 
-    # Fall back to fpdf (works everywhere, limited Unicode)
     fpdf_error = _create_pdf_fpdf(title, content, full_path)
     if fpdf_error is None:
-        return f"PDF successfully created at sandbox/{filename}"
+        return f"PDF successfully created at {SANDBOX_DIR}/{filename}"
 
     return f"Error creating PDF: {fpdf_error}"
-
-
-def get_youtube_transcript(url_or_id: str) -> str:
-    """Get the transcript of a YouTube video given its URL or video ID."""
-    video_id = url_or_id.strip()
-    # Extract video ID from common URL formats
-    for prefix in ["https://www.youtube.com/watch?v=", "https://youtube.com/watch?v=",
-                    "https://youtu.be/", "https://m.youtube.com/watch?v="]:
-        if video_id.startswith(prefix):
-            video_id = video_id[len(prefix):].split("&")[0].split("?")[0]
-            break
-    ytt_api = YouTubeTranscriptApi()
-    transcript = ytt_api.fetch(video_id)
-    lines = [entry.text for entry in transcript.snippets]
-    return "\n".join(lines)
 
 
 def read_spreadsheet(file_path: str) -> str:
     """Read a CSV or Excel file from the sandbox directory and return a summary with the first rows.
     Pass the file path relative to the sandbox folder (e.g. 'data.csv' or 'report.xlsx').
     """
-    full_path = os.path.join("sandbox", file_path)
+    full_path = os.path.join(SANDBOX_DIR, file_path)
     if not os.path.isfile(full_path):
         return f"Error: file not found at {full_path}"
 
@@ -264,9 +216,8 @@ def read_spreadsheet(file_path: str) -> str:
         return f"Error reading file: {e}"
 
     total_rows = len(rows)
-    preview_rows = rows[:21]  # header + up to 20 data rows
+    preview_rows = rows[:21]
 
-    # Build a readable table
     lines = [f"File: {file_path}  |  {total_rows} rows  |  {len(headers)} columns"]
     lines.append(f"Columns: {', '.join(headers)}")
     lines.append("")
@@ -284,9 +235,8 @@ def write_spreadsheet(input: str) -> str:
     """Create a CSV or Excel file in the sandbox directory.
     Input must be a JSON string with keys:
       - 'filename': e.g. 'output.csv' or 'report.xlsx'
-      - 'headers': list of column names, e.g. ["Name", "Age", "City"]
-      - 'rows': list of lists, e.g. [["Alice", "30", "NYC"], ["Bob", "25", "LA"]]
-    Example: {"filename": "people.csv", "headers": ["Name", "Age"], "rows": [["Alice", "30"], ["Bob", "25"]]}
+      - 'headers': list of column names
+      - 'rows': list of lists
     """
     try:
         data = json.loads(input)
@@ -297,8 +247,8 @@ def write_spreadsheet(input: str) -> str:
     headers = data.get("headers", [])
     rows = data.get("rows", [])
 
-    os.makedirs("sandbox", exist_ok=True)
-    full_path = os.path.join("sandbox", filename)
+    os.makedirs(SANDBOX_DIR, exist_ok=True)
+    full_path = os.path.join(SANDBOX_DIR, filename)
     ext = os.path.splitext(filename)[1].lower()
 
     try:
@@ -321,7 +271,7 @@ def write_spreadsheet(input: str) -> str:
     except Exception as e:
         return f"Error writing file: {e}"
 
-    return f"Spreadsheet successfully created at sandbox/{filename} ({len(rows)} data rows)"
+    return f"Spreadsheet successfully created at {SANDBOX_DIR}/{filename} ({len(rows)} data rows)"
 
 
 def chart_data(input: str) -> str:
@@ -332,11 +282,8 @@ def chart_data(input: str) -> str:
       - 'title': chart title (optional)
       - 'x_label': x-axis label (optional)
       - 'y_label': y-axis label (optional)
-      - 'labels': list of labels for x-axis or pie slices, e.g. ["Q1", "Q2", "Q3"]
-      - 'datasets': list of dataset objects, each with:
-          - 'label': legend label (optional)
-          - 'values': list of numbers
-    Example: {"filename": "sales.png", "chart_type": "bar", "title": "Sales", "labels": ["Q1","Q2","Q3"], "datasets": [{"label": "Revenue", "values": [100,200,150]}]}
+      - 'labels': list of labels
+      - 'datasets': list of dataset objects with 'label' and 'values'
     """
     try:
         data = json.loads(input)
@@ -354,8 +301,8 @@ def chart_data(input: str) -> str:
     if not datasets:
         return "Error: 'datasets' must contain at least one dataset with 'values'."
 
-    os.makedirs("sandbox", exist_ok=True)
-    full_path = os.path.join("sandbox", filename)
+    os.makedirs(SANDBOX_DIR, exist_ok=True)
+    full_path = os.path.join(SANDBOX_DIR, filename)
 
     try:
         fig, ax = plt.subplots(figsize=(10, 6))
@@ -367,7 +314,7 @@ def chart_data(input: str) -> str:
         elif chart_type == "scatter":
             for ds in datasets:
                 values = ds.get("values", [])
-                x = list(range(len(values))) if not labels else list(range(len(values)))
+                x = list(range(len(values)))
                 ax.scatter(x, values, label=ds.get("label", ""))
             if labels:
                 ax.set_xticks(range(len(labels)))
@@ -407,89 +354,17 @@ def chart_data(input: str) -> str:
     except Exception as e:
         return f"Error creating chart: {e}"
 
-    return f"Chart successfully saved at sandbox/{filename}"
+    return f"Chart successfully saved at {SANDBOX_DIR}/{filename}"
 
 
-_kb: KnowledgeBase | None = None
-
-
-def _get_kb() -> KnowledgeBase:
-    """Lazy-initialise and return the singleton KnowledgeBase instance."""
-    global _kb
-    if _kb is None:
-        _kb = KnowledgeBase()
-    return _kb
-
-
-def search_knowledge_base(query: str) -> str:
-    """Search your personal knowledge base for information relevant to the query.
-    The knowledge base contains documents (PDFs, text files, markdown, CSV) that
-    you have previously indexed. Returns the most relevant text chunks with source info.
-    """
-    kb = _get_kb()
-    return kb.search(query)
-
-
-def add_to_knowledge_base(file_path: str) -> str:
-    """Add a document to the knowledge base for future semantic search.
-    Pass a file path relative to the sandbox directory (e.g. 'report.pdf' or 'knowledge/notes.md').
-    Supported formats: PDF, TXT, Markdown, CSV.
-    """
-    full_path = os.path.join("sandbox", file_path)
-    kb = _get_kb()
-    return kb.add_document(full_path)
-
-
-def list_knowledge_base() -> str:
-    """List all documents currently indexed in the knowledge base, with their chunk counts."""
-    kb = _get_kb()
-    return kb.list_documents()
-
-
-def remove_from_knowledge_base(filename: str) -> str:
-    """Remove a document from the knowledge base by filename (e.g. 'report.pdf').
-    This only removes it from the search index, not from disk.
-    """
-    kb = _get_kb()
-    return kb.remove_document(filename)
-
-
-def reindex_knowledge_base() -> str:
-    """Re-scan the sandbox/knowledge/ directory and index all new or changed files.
-    Unchanged files are skipped automatically.
-    """
-    kb = _get_kb()
-    return kb.index_all()
-
-
-async def other_tools():
-    push_tool = Tool(name="send_push_notification", func=push, description="Use this tool when you want to send a push notification")
+def get_tools():
+    """Return all document and file tools."""
     file_tools = get_file_tools()
-
-    tool_search = Tool(
-        name="search",
-        func=serper.run,
-        description="Use this tool when you want to get the results of an online web search"
-    )
-
-    wikipedia = WikipediaAPIWrapper()
-    wiki_tool = WikipediaQueryRun(api_wrapper=wikipedia)
-
-    python_repl = PythonREPLTool()
-
-    arxiv = ArxivAPIWrapper()
-    arxiv_tool = ArxivQueryRun(api_wrapper=arxiv)
 
     pdf_tool = Tool(
         name="read_pdf",
         func=read_pdf,
-        description="Read and extract text from a PDF file in the sandbox directory. Pass the file path relative to the sandbox folder."
-    )
-
-    youtube_tool = Tool(
-        name="get_youtube_transcript",
-        func=get_youtube_transcript,
-        description="Get the transcript of a YouTube video. Pass a YouTube URL or video ID."
+        description="Read and extract text from a PDF file in the sandbox directory. Pass the file path relative to the sandbox folder.",
     )
 
     create_pdf_tool = Tool(
@@ -531,86 +406,8 @@ async def other_tools():
             "Generate a PNG chart (bar, line, pie, or scatter) from data and save it to the sandbox directory. "
             "Input must be a JSON string with keys: 'filename', 'chart_type' (bar/line/pie/scatter), "
             "'title' (optional), 'x_label'/'y_label' (optional), 'labels' (list), "
-            "and 'datasets' (list of objects with 'label' and 'values'). "
-            'Example: {"filename": "sales.png", "chart_type": "bar", "title": "Sales", "labels": ["Q1","Q2"], "datasets": [{"label": "Revenue", "values": [100,200]}]}'
+            "and 'datasets' (list of objects with 'label' and 'values')."
         ),
     )
 
-    schedule_task_tool = StructuredTool.from_function(
-        func=schedule_task,
-        name="schedule_task",
-        description=(
-            "Schedule a recurring background task with a cron expression. "
-            "Example: description='Check BBC News for tech headlines', cron='0 8 * * *', notify=True"
-        ),
-    )
-
-    list_tasks_tool = StructuredTool.from_function(
-        func=list_scheduled_tasks,
-        name="list_scheduled_tasks",
-        description="List all scheduled background tasks with their status, schedule, and last results.",
-    )
-
-    cancel_task_tool = StructuredTool.from_function(
-        func=cancel_scheduled_task,
-        name="cancel_scheduled_task",
-        description="Cancel and remove a scheduled task by its ID (e.g. 'a1b2c3d4').",
-    )
-
-    search_kb_tool = Tool(
-        name="search_knowledge_base",
-        func=search_knowledge_base,
-        description=(
-            "Search your personal knowledge base for information relevant to a query. "
-            "The knowledge base contains documents (PDFs, text files, markdown, CSV) that have been indexed. "
-            "Returns the most relevant text chunks with source file info. Use this when the user asks about their own documents."
-        ),
-    )
-
-    add_kb_tool = Tool(
-        name="add_to_knowledge_base",
-        func=add_to_knowledge_base,
-        description=(
-            "Add a document to the knowledge base for future semantic search. "
-            "Pass a file path relative to the sandbox directory (e.g. 'report.pdf' or 'knowledge/notes.md'). "
-            "Supported formats: PDF, TXT, Markdown, CSV."
-        ),
-    )
-
-    list_kb_tool = Tool(
-        name="list_knowledge_base",
-        func=list_knowledge_base,
-        description="List all documents currently indexed in the knowledge base with their chunk counts.",
-    )
-
-    remove_kb_tool = Tool(
-        name="remove_from_knowledge_base",
-        func=remove_from_knowledge_base,
-        description=(
-            "Remove a document from the knowledge base search index by filename (e.g. 'report.pdf'). "
-            "This only removes it from the index, not from disk."
-        ),
-    )
-
-    all_tools = file_tools + [push_tool, tool_search, python_repl, wiki_tool, arxiv_tool, pdf_tool, youtube_tool, create_pdf_tool, read_spreadsheet_tool, write_spreadsheet_tool, chart_data_tool, schedule_task_tool, list_tasks_tool, cancel_task_tool, search_kb_tool, add_kb_tool, list_kb_tool, remove_kb_tool]
-
-    if os.getenv("GPLACES_API_KEY"):
-        all_tools.append(GooglePlacesTool())
-
-    if os.getenv("GOOGLE_API_KEY") or os.getenv("GPLACES_API_KEY"):
-        apartment_search_tool = Tool(
-            name="apartment_search",
-            func=apartment_search,
-            description=(
-                "Perform a comprehensive apartment/address search analysis for families. "
-                "Finds the nearest Grundschule, Kita, Supermarket, Cafe, Playground, and Restaurant "
-                "with walking times, calculates commute times by car and public transport to "
-                "BMW (Bremer Str. 6, München) and Workday (Streitfeldstraße 19, München), "
-                "and gathers general area information. "
-                "Pass the full address, e.g. 'Leopoldstraße 97, München'."
-            ),
-        )
-        all_tools.append(apartment_search_tool)
-
-    return all_tools
-
+    return file_tools + [pdf_tool, create_pdf_tool, read_spreadsheet_tool, write_spreadsheet_tool, chart_data_tool]

@@ -1,28 +1,61 @@
-from typing import Annotated
+"""
+ApexFlow Orchestrator — multi-agent architecture.
+
+The Sidekick class is the top-level orchestrator.  Instead of binding 40+
+tools directly, it delegates to specialized sub-agents (research, browser,
+documents, knowledge, location, system), each exposed as a single tool.
+
+The evaluator loop is **optional**: it only runs when the user provides
+explicit success criteria.
+"""
+
+from typing import Annotated, List, Any, Optional, Dict
 from typing_extensions import TypedDict
+
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from dotenv import load_dotenv
 from langgraph.prebuilt import ToolNode
-from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.tools import Tool
 from langchain_community.chat_message_histories import SQLChatMessageHistory
-from typing import List, Any, Optional, Dict
 from pydantic import BaseModel, Field
-from sidekick_tools import playwright_tools, other_tools
+
+from config import DB_PATH, CHECKPOINTS_DB_PATH, DEFAULT_MODEL
 from user_profile import UserProfile
+
+from agents.research import ResearchAgent
+from agents.browser import BrowserAgent
+from agents.documents import DocumentsAgent
+from agents.knowledge import KnowledgeAgent
+from agents.location import LocationAgent
+from agents.system import SystemAgent
+from agents.jobsearch import JobSearchAgent
+from agents.interview import InterviewCoachAgent
+
+from tools.research import get_tools as get_research_tools
+from tools.documents import get_tools as get_documents_tools
+from tools.knowledge_tools import get_tools as get_knowledge_tools
+from tools.location import get_tools as get_location_tools
+from tools.system import get_tools as get_system_tools
+from tools.jobsearch import get_tools as get_jobsearch_tools
+from tools.interview import get_tools as get_interview_tools
+
 import uuid
 import aiosqlite
 import asyncio
 from datetime import datetime
 
-load_dotenv(override=True)
 
+# ---------------------------------------------------------------------------
+# State & schemas
+# ---------------------------------------------------------------------------
 
 class State(TypedDict):
     messages: Annotated[List[Any], add_messages]
     success_criteria: str
+    has_explicit_criteria: bool
     feedback_on_work: Optional[str]
     success_criteria_met: bool
     user_input_needed: bool
@@ -47,40 +80,123 @@ class ProfileUpdate(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+
 class Sidekick:
     def __init__(self, session_id: str = None):
         self.worker_llm_with_tools = None
         self.evaluator_llm_with_output = None
         self.tools = None
-        self.llm_with_tools = None
         self.graph = None
         self.sidekick_id = session_id or str(uuid.uuid4())
         self._db_conn = None
         self.memory = None
         self.chat_history = SQLChatMessageHistory(
             session_id=self.sidekick_id,
-            connection="sqlite:///sidekick_chat_history.db",
+            connection=f"sqlite:///{DB_PATH}",
         )
         self.user_profile = UserProfile()
-        self.browser = None
-        self.playwright = None
+        self.browser_agent = None
+        self._agents: Dict[str, Any] = {}
+        self._agent_context: str = ""
 
-    async def setup(self):
-        self._db_conn = await aiosqlite.connect("sidekick_checkpoints.db")
+    async def setup(self, include_browser=True):
+        self._db_conn = await aiosqlite.connect(CHECKPOINTS_DB_PATH)
         self.memory = AsyncSqliteSaver(self._db_conn)
-        self.tools, self.browser, self.playwright = await playwright_tools()
-        self.tools += await other_tools()
-        worker_llm = ChatOpenAI(model="gpt-5.2-chat-latest")
+
+        # Create sub-agents with their tool sets
+        self._agents["research"] = ResearchAgent(get_research_tools())
+        self._agents["documents"] = DocumentsAgent(get_documents_tools())
+        self._agents["knowledge"] = KnowledgeAgent(get_knowledge_tools())
+        self._agents["system"] = SystemAgent(get_system_tools())
+        self._agents["jobsearch"] = JobSearchAgent(get_jobsearch_tools())
+        self._agents["interview"] = InterviewCoachAgent(get_interview_tools())
+
+        location_tools = get_location_tools()
+        if location_tools:
+            self._agents["location"] = LocationAgent(location_tools)
+
+        if include_browser:
+            self.browser_agent = await BrowserAgent.create()
+            self._agents["browser"] = self.browser_agent
+
+        # Wrap each agent as a tool for the orchestrator
+        self.tools = self._create_agent_tools()
+
+        worker_llm = ChatOpenAI(model=DEFAULT_MODEL)
         self.worker_llm_with_tools = worker_llm.bind_tools(self.tools)
-        evaluator_llm = ChatOpenAI(model="gpt-5.2-chat-latest")
+
+        evaluator_llm = ChatOpenAI(model=DEFAULT_MODEL)
         self.evaluator_llm_with_output = evaluator_llm.with_structured_output(EvaluatorOutput)
-        await self.build_graph()
+
+        self.build_graph()
+
+    def _create_agent_tools(self) -> list:
+        """Wrap each sub-agent's run() method as a LangChain Tool."""
+        agent_descriptions = {
+            "research": (
+                "Research specialist: search the web (Google), Wikipedia, arXiv academic papers, "
+                "and YouTube video transcripts for information."
+            ),
+            "browser": (
+                "Browser specialist: navigate to URLs, click links, fill forms, take screenshots, "
+                "and extract content from web pages using a real Chromium browser."
+            ),
+            "documents": (
+                "Document specialist: read/write/manage files in the sandbox, create PDFs, "
+                "read/write spreadsheets (CSV/Excel), and generate PNG charts."
+            ),
+            "knowledge": (
+                "Knowledge base specialist: search, index, list, and remove documents in the "
+                "user's personal document collection (semantic search over PDFs, text, markdown, CSV)."
+            ),
+            "location": (
+                "Location specialist: analyze addresses for family suitability (nearby schools, "
+                "supermarkets, playgrounds with walking times), calculate commute times, "
+                "and search Google Places for points of interest."
+            ),
+            "system": (
+                "System specialist: schedule recurring background tasks with cron expressions, "
+                "send push notifications, list/cancel scheduled tasks, and run Python code."
+            ),
+            "jobsearch": (
+                "Job search specialist (DISCOVER-ONLY — never submits applications): search jobs "
+                "via Adzuna/Serper, manage the candidate profile (parsed from CV/LinkedIn PDFs), "
+                "rank jobs against the profile, generate tailored CVs and cover letters, and "
+                "record application form requirements. For LinkedIn/Stepstone URLs the jobsearch "
+                "agent returns, delegate to the browser agent to visit the page and inspect the "
+                "form fields, then hand the extracted fields back to jobsearch to save them."
+            ),
+            "interview": (
+                "Interview coach: runs mock interviews tied to a specific job in the pipeline, "
+                "scores each answer, and produces an aggregate summary. Use this when the user "
+                "wants to practice for a real interview."
+            ),
+        }
+
+        tools = []
+        for name, agent in self._agents.items():
+            async def _run_with_context(task: str, _agent=agent) -> str:
+                return await _agent.run(task, context=self._agent_context)
+
+            tools.append(Tool(
+                name=f"{name}_agent",
+                func=None,
+                coroutine=_run_with_context,
+                description=agent_descriptions[name],
+            ))
+        return tools
+
+    # ------------------------------------------------------------------
+    # Memory helpers
+    # ------------------------------------------------------------------
 
     def _get_memory_context(self) -> str:
         """Build a compact memory block: user profile + last 3 conversation pairs."""
         profile_block = self.user_profile.get_prompt_block()
 
-        # Only inject the last 3 message pairs (6 messages) to keep the prompt short
         past = self.chat_history.messages[-6:]
         if not past:
             return profile_block
@@ -97,7 +213,7 @@ class Sidekick:
 
     async def _extract_and_update_profile(self, user_message: str, assistant_reply: str):
         """Use an LLM to extract user facts from the latest exchange and persist them."""
-        extractor_llm = ChatOpenAI(model="gpt-5.2-chat-latest").with_structured_output(ProfileUpdate)
+        extractor_llm = ChatOpenAI(model=DEFAULT_MODEL).with_structured_output(ProfileUpdate)
         existing = self.user_profile.get_all()
         existing_summary = ", ".join(f"{k}={v}" for k, v in existing.items()) if existing else "none yet"
 
@@ -110,61 +226,53 @@ Do NOT invent facts. Return an empty list if nothing new is learned.
 User said: {user_message}
 Assistant replied: {assistant_reply[:500]}"""
 
-        result = extractor_llm.invoke([HumanMessage(content=prompt)])
+        result = await extractor_llm.ainvoke([HumanMessage(content=prompt)])
         for fact in result.facts:
             self.user_profile.upsert(fact.key, fact.value)
 
-    def worker(self, state: State) -> Dict[str, Any]:
+    # ------------------------------------------------------------------
+    # Graph nodes
+    # ------------------------------------------------------------------
+
+    def _build_agent_list(self) -> str:
+        """Build a short list of available agents for the system prompt."""
+        lines = []
+        for tool in self.tools:
+            lines.append(f"- {tool.name}: {tool.description}")
+        return "\n".join(lines)
+
+    async def worker(self, state: State) -> Dict[str, Any]:
         memory_context = self._get_memory_context()
-        system_message = f"""You are a helpful assistant that can use tools to complete tasks.
-    You keep working on a task until either you have a question or clarification for the user, or the success criteria is met.
-    The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-    {memory_context}
+        self._agent_context = memory_context
 
-    You have the following tools available:
-    - Web browsing: Navigate to URLs, click links, fill forms, and extract content from web pages.
-    - Web search: Search the internet using Google for up-to-date information.
-    - File management: Read, write, move, copy, delete, and list files in the sandbox directory.
-    - Python execution: Run Python code. Include print() statements to receive output.
-    - Wikipedia: Look up general knowledge topics on Wikipedia.
-    - PDF reader: Extract text from PDF files in the sandbox directory. Pass the file path relative to the sandbox folder.
-    - PDF creator: Create a proper, valid PDF file in the sandbox. Pass a JSON string with 'filename', 'title', and 'content'. ALWAYS use this instead of write_file when creating .pdf files.
-    - arXiv search: Search for academic papers on arXiv by topic, author, or keyword.
-    - YouTube transcripts: Fetch the transcript of any YouTube video by passing its URL or video ID.
-    - Push notifications: Send push notifications to alert the user.
-    - Spreadsheet reader: Read CSV or Excel files from the sandbox and get a summary with columns and data rows.
-    - Spreadsheet writer: Create CSV or Excel files in the sandbox from structured data (headers + rows).
-    - Chart generator: Create PNG charts (bar, line, pie, scatter) from data and save to the sandbox.
-    - Task scheduler: Schedule recurring background tasks with cron expressions (e.g. "check news every morning"). Pass a JSON string with 'description', 'cron', and optional 'notify'.
-    - List scheduled tasks: View all scheduled tasks with their status, schedule, and last results.
-    - Cancel scheduled task: Remove a scheduled task by its ID.
-    - Knowledge base search: Search your personal document collection (PDFs, text files, markdown, CSV) for relevant information. Use this when the user asks about their own documents or uploaded files.
-    - Add to knowledge base: Index a document from the sandbox into the knowledge base for future semantic search.
-    - List knowledge base: Show all documents currently indexed in the knowledge base.
-    - Remove from knowledge base: Remove a document from the search index by filename.
-    - Google Places: Search for places and points of interest using Google Maps. Pass a search query like "Italian restaurants near Times Square, New York" to get names, addresses, phone numbers, and websites.
-    - Apartment Search: Comprehensive address/apartment analysis for families. Finds nearest Grundschule, Kita, Supermarket, Cafe, Playground, Restaurant with walking times, calculates commute by car and public transport to BMW and Workday offices, and gathers area information. Pass a full address like "Leopoldstraße 97, München".
+        system_message = f"""You are an orchestrator that delegates tasks to specialized agents.
+The current date and time is {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+{memory_context}
 
-    This is the success criteria:
-    {state["success_criteria"]}
-    You should reply either with a question for the user about this assignment, or with your final response.
-    If you have a question for the user, you need to reply by clearly stating your question. An example might be:
+You have these specialist agents available:
+{self._build_agent_list()}
 
-    Question: please clarify whether you want a summary or a detailed answer
+DELEGATION GUIDELINES:
+- Delegate tasks to the right agent by calling them with a clear, specific instruction.
+- When a user request involves INDEPENDENT sub-tasks, call multiple agents in PARALLEL by including multiple tool calls in a single response.
+- When tasks are DEPENDENT (one needs the result of another), call them sequentially.
+- When an agent returns results, synthesize them into a clear response for the user.
 
-    If you've finished, reply with the final answer, and don't ask a question; simply reply with the answer.
-    """
+If you need clarification from the user, ask directly without calling any agent.
+"""
+
+        if state.get("has_explicit_criteria"):
+            system_message += f"""
+The user provided these success criteria for this task:
+{state["success_criteria"]}
+"""
 
         if state.get("feedback_on_work"):
             system_message += f"""
-    Previously you thought you completed the assignment, but your reply was rejected because the success criteria was not met.
-    Here is the feedback on why this was rejected:
-    {state["feedback_on_work"]}
-    With this feedback, please continue the assignment, ensuring that you meet the success criteria or have a question for the user."""
+Previously your response was rejected because the success criteria were not met.
+Feedback: {state["feedback_on_work"]}
+Please continue working to meet the criteria or ask the user for clarification."""
 
-        # Build messages list with system message, without mutating state in-place
-        # (in-place mutation corrupts LangGraph checkpoint history, breaking
-        # tool_calls / tool_response pairing across worker iterations)
         messages = [
             SystemMessage(content=system_message) if isinstance(m, SystemMessage) else m
             for m in state["messages"]
@@ -172,21 +280,17 @@ Assistant replied: {assistant_reply[:500]}"""
         if not any(isinstance(m, SystemMessage) for m in state["messages"]):
             messages = [SystemMessage(content=system_message)] + messages
 
-        # Invoke the LLM with tools
-        response = self.worker_llm_with_tools.invoke(messages)
-
-        # Return updated state
-        return {
-            "messages": [response],
-        }
+        response = await self.worker_llm_with_tools.ainvoke(messages)
+        return {"messages": [response]}
 
     def worker_router(self, state: State) -> str:
         last_message = state["messages"][-1]
-
         if hasattr(last_message, "tool_calls") and last_message.tool_calls:
             return "tools"
-        else:
-            return "evaluator"
+        # Skip evaluator when no explicit success criteria
+        if not state.get("has_explicit_criteria"):
+            return "end"
+        return "evaluator"
 
     def format_conversation(self, messages: List[Any]) -> str:
         conversation = "Conversation history:\n\n"
@@ -198,88 +302,93 @@ Assistant replied: {assistant_reply[:500]}"""
                 conversation += f"Assistant: {text}\n"
         return conversation
 
-    def evaluator(self, state: State) -> State:
+    async def evaluator(self, state: State) -> State:
         last_response = state["messages"][-1].content
 
         system_message = """You are an evaluator that determines if a task has been completed successfully by an Assistant.
-    Assess the Assistant's last response based on the given criteria. Respond with your feedback, and with your decision on whether the success criteria has been met,
-    and whether more input is needed from the user."""
+Assess the Assistant's last response based on the given criteria. Respond with your feedback, and with your decision on whether the success criteria has been met,
+and whether more input is needed from the user."""
 
-        user_message = f"""You are evaluating a conversation between the User and Assistant. You decide what action to take based on the last response from the Assistant.
+        user_message = f"""You are evaluating a conversation between the User and Assistant.
 
-    The entire conversation with the assistant, with the user's original request and all replies, is:
-    {self.format_conversation(state["messages"])}
+The entire conversation is:
+{self.format_conversation(state["messages"])}
 
-    The success criteria for this assignment is:
-    {state["success_criteria"]}
+The success criteria for this assignment is:
+{state["success_criteria"]}
 
-    And the final response from the Assistant that you are evaluating is:
-    {last_response}
+The final response from the Assistant that you are evaluating is:
+{last_response}
 
-    Respond with your feedback, and decide if the success criteria is met by this response.
-    Also, decide if more user input is required, either because the assistant has a question, needs clarification, or seems to be stuck and unable to answer without help.
+Respond with your feedback, and decide if the success criteria is met.
+Also, decide if more user input is required.
 
-    The Assistant has access to a tool to write files. If the Assistant says they have written a file, then you can assume they have done so.
-    Overall you should give the Assistant the benefit of the doubt if they say they've done something. But you should reject if you feel that more work should go into this.
-
-    """
+The Assistant has access to specialized agents with tools. If the Assistant says they have done something, give them the benefit of the doubt.
+But reject if you feel that more work should go into this.
+"""
         if state["feedback_on_work"]:
-            user_message += f"Also, note that in a prior attempt from the Assistant, you provided this feedback: {state['feedback_on_work']}\n"
-            user_message += "If you're seeing the Assistant repeating the same mistakes, then consider responding that user input is required."
+            user_message += f"Also, note that in a prior attempt, you provided this feedback: {state['feedback_on_work']}\n"
+            user_message += "If the Assistant is repeating the same mistakes, respond that user input is required."
 
         evaluator_messages = [
             SystemMessage(content=system_message),
             HumanMessage(content=user_message),
         ]
 
-        eval_result = self.evaluator_llm_with_output.invoke(evaluator_messages)
-        new_state = {
+        eval_result = await self.evaluator_llm_with_output.ainvoke(evaluator_messages)
+        return {
             "messages": [
-                {
-                    "role": "assistant",
-                    "content": f"Evaluator Feedback on this answer: {eval_result.feedback}",
-                }
+                {"role": "assistant", "content": f"Evaluator Feedback: {eval_result.feedback}"}
             ],
             "feedback_on_work": eval_result.feedback,
             "success_criteria_met": eval_result.success_criteria_met,
             "user_input_needed": eval_result.user_input_needed,
         }
-        return new_state
 
     def route_based_on_evaluation(self, state: State) -> str:
         if state["success_criteria_met"] or state["user_input_needed"]:
             return "END"
-        else:
-            return "worker"
+        return "worker"
 
-    async def build_graph(self):
-        # Set up Graph Builder with State
+    # ------------------------------------------------------------------
+    # Graph construction
+    # ------------------------------------------------------------------
+
+    def build_graph(self):
         graph_builder = StateGraph(State)
 
-        # Add nodes
         graph_builder.add_node("worker", self.worker)
         graph_builder.add_node("tools", ToolNode(tools=self.tools))
         graph_builder.add_node("evaluator", self.evaluator)
 
-        # Add edges
         graph_builder.add_conditional_edges(
-            "worker", self.worker_router, {"tools": "tools", "evaluator": "evaluator"}
+            "worker",
+            self.worker_router,
+            {"tools": "tools", "evaluator": "evaluator", "end": END},
         )
         graph_builder.add_edge("tools", "worker")
         graph_builder.add_conditional_edges(
-            "evaluator", self.route_based_on_evaluation, {"worker": "worker", "END": END}
+            "evaluator",
+            self.route_based_on_evaluation,
+            {"worker": "worker", "END": END},
         )
         graph_builder.add_edge(START, "worker")
 
-        # Compile the graph
         self.graph = graph_builder.compile(checkpointer=self.memory)
+
+    # ------------------------------------------------------------------
+    # Execution
+    # ------------------------------------------------------------------
 
     async def run_superstep(self, message, success_criteria, history):
         config = {"configurable": {"thread_id": self.sidekick_id}}
 
+        has_explicit = bool(success_criteria and success_criteria.strip())
+
         state = {
             "messages": message,
             "success_criteria": success_criteria or "The answer should be clear and accurate",
+            "has_explicit_criteria": has_explicit,
             "feedback_on_work": None,
             "success_criteria_met": False,
             "user_input_needed": False,
@@ -290,53 +399,76 @@ Assistant replied: {assistant_reply[:500]}"""
         yield history
 
         worker_reply_content = ""
-        evaluator_feedback_content = ""
+        current_assistant_msg = None
 
-        async for chunk in self.graph.astream(state, config=config):
-            for node_name, node_output in chunk.items():
-                if node_name == "worker":
-                    ai_msg = node_output["messages"][-1]
-                    if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
-                        for tc in ai_msg.tool_calls:
-                            args_summary = ", ".join(
-                                f"{k}={repr(v)[:80]}" for k, v in tc["args"].items()
-                            )
-                            tool_msg = {
-                                "role": "assistant",
-                                "content": f"**{tc['name']}**({args_summary})",
-                                "metadata": {"title": f"🔧 Calling tool: {tc['name']}"},
-                            }
-                            history = history + [tool_msg]
+        async for stream_mode, chunk in self.graph.astream(
+            state, config=config, stream_mode=["messages", "updates"]
+        ):
+            if stream_mode == "messages":
+                msg_chunk, metadata = chunk
+                # Stream tokens from the worker node's LLM
+                if metadata.get("langgraph_node") == "worker":
+                    # Skip tool call chunks (not user-visible text)
+                    if hasattr(msg_chunk, "tool_call_chunks") and msg_chunk.tool_call_chunks:
+                        continue
+
+                    token = msg_chunk.content if hasattr(msg_chunk, "content") else ""
+                    if token:
+                        if current_assistant_msg is None:
+                            current_assistant_msg = {"role": "assistant", "content": token}
+                            history = history + [current_assistant_msg]
+                        else:
+                            current_assistant_msg["content"] += token
+                            # Force Gradio to detect the change
+                            history = list(history)
+                            history[-1] = dict(current_assistant_msg)
                         yield history
-                    else:
-                        worker_reply_content = ai_msg.content
 
-                elif node_name == "tools":
-                    for tool_result in node_output["messages"]:
-                        content = tool_result.content if hasattr(tool_result, "content") else str(tool_result)
-                        truncated = content[:500] + ("..." if len(content) > 500 else "")
-                        tool_name = tool_result.name if hasattr(tool_result, "name") else "tool"
-                        result_msg = {
-                            "role": "assistant",
-                            "content": truncated,
-                            "metadata": {"title": f"📋 Result: {tool_name}"},
-                        }
-                        history = history + [result_msg]
-                    yield history
+            elif stream_mode == "updates":
+                for node_name, node_output in chunk.items():
+                    if node_name == "worker":
+                        ai_msg = node_output["messages"][-1]
+                        if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
+                            # Tool calls — show delegation messages
+                            current_assistant_msg = None
+                            for tc in ai_msg.tool_calls:
+                                args_summary = ", ".join(
+                                    f"{k}={repr(v)[:80]}" for k, v in tc["args"].items()
+                                )
+                                tool_msg = {
+                                    "role": "assistant",
+                                    "content": f"**{tc['name']}**({args_summary})",
+                                    "metadata": {"title": f"\U0001f916 Delegating to: {tc['name']}"},
+                                }
+                                history = history + [tool_msg]
+                            yield history
+                        else:
+                            # Final worker response (already streamed via "messages" mode)
+                            worker_reply_content = ai_msg.content
+                            current_assistant_msg = None
 
-                elif node_name == "evaluator":
-                    evaluator_feedback_content = node_output["messages"][-1]["content"] if node_output.get("messages") else ""
+                    elif node_name == "tools":
+                        for tool_result in node_output["messages"]:
+                            content = tool_result.content if hasattr(tool_result, "content") else str(tool_result)
+                            truncated = content[:500] + ("..." if len(content) > 500 else "")
+                            tool_name = tool_result.name if hasattr(tool_result, "name") else "agent"
+                            result_msg = {
+                                "role": "assistant",
+                                "content": truncated,
+                                "metadata": {"title": f"\U0001f4cb Result: {tool_name}"},
+                            }
+                            history = history + [result_msg]
+                        yield history
 
-        # Add the final worker reply and evaluator feedback
-        if worker_reply_content:
-            reply = {"role": "assistant", "content": worker_reply_content}
-            history = history + [reply]
-            yield history
-
-        if evaluator_feedback_content:
-            feedback = {"role": "assistant", "content": evaluator_feedback_content}
-            history = history + [feedback]
-            yield history
+                    elif node_name == "evaluator":
+                        eval_msgs = node_output.get("messages", [])
+                        if eval_msgs:
+                            last_eval = eval_msgs[-1]
+                            content = last_eval.get("content", "") if isinstance(last_eval, dict) else ""
+                            if content:
+                                feedback = {"role": "assistant", "content": content}
+                                history = history + [feedback]
+                                yield history
 
         # Persist to long-term memory
         if worker_reply_content:
@@ -344,17 +476,17 @@ Assistant replied: {assistant_reply[:500]}"""
             self.chat_history.add_ai_message(worker_reply_content)
             await self._extract_and_update_profile(message, worker_reply_content)
 
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
     def cleanup(self):
-        if self.browser:
+        if self.browser_agent:
             try:
                 loop = asyncio.get_running_loop()
-                loop.create_task(self.browser.close())
-                if self.playwright:
-                    loop.create_task(self.playwright.stop())
+                loop.create_task(self.browser_agent.cleanup())
             except RuntimeError:
-                asyncio.run(self.browser.close())
-                if self.playwright:
-                    asyncio.run(self.playwright.stop())
+                asyncio.run(self.browser_agent.cleanup())
         if self._db_conn:
             try:
                 loop = asyncio.get_running_loop()

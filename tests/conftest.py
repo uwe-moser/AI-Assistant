@@ -57,12 +57,15 @@ class MockChatLLM:
         self.tool_calls = tool_calls or []
         self.last_messages = None
 
-    def invoke(self, messages):
+    def invoke(self, messages, **kwargs):
         self.last_messages = messages
         msg = AIMessage(content=self.response_content)
         if self.tool_calls:
             msg.tool_calls = self.tool_calls
         return msg
+
+    async def ainvoke(self, messages, **kwargs):
+        return self.invoke(messages)
 
     def bind_tools(self, tools):
         return self
@@ -77,7 +80,10 @@ class MockStructuredLLM:
     def __init__(self, output):
         self._output = output
 
-    def invoke(self, messages):
+    def invoke(self, messages, **kwargs):
+        return self._output
+
+    async def ainvoke(self, messages, **kwargs):
         return self._output
 
     def with_structured_output(self, schema):

@@ -16,104 +16,140 @@ from typing import Optional
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from config import TASKS_DB_PATH
+
 log = logging.getLogger(__name__)
 
-DB_PATH = "sidekick_scheduled_tasks.db"
+DB_PATH = TASKS_DB_PATH
 
 # Global reference to the running TaskRunner (set by TaskRunner.start())
 _runner: Optional["TaskRunner"] = None
+
+# Module-level reusable connection (for production use)
+_conn: Optional[sqlite3.Connection] = None
+_conn_db_path: Optional[str] = None
+
+_CREATE_TABLE_SQL = """
+    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+        id          TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        cron_expr   TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        enabled     INTEGER NOT NULL DEFAULT 1,
+        last_run    TEXT,
+        last_result TEXT,
+        notify      INTEGER NOT NULL DEFAULT 0
+    )
+"""
 
 # ---------------------------------------------------------------------------
 # Database helpers
 # ---------------------------------------------------------------------------
 
 def _get_connection(db_path: str = None) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path or DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS scheduled_tasks (
-            id          TEXT PRIMARY KEY,
-            description TEXT NOT NULL,
-            cron_expr   TEXT NOT NULL,
-            created_at  TEXT NOT NULL,
-            enabled     INTEGER NOT NULL DEFAULT 1,
-            last_run    TEXT,
-            last_result TEXT,
-            notify      INTEGER NOT NULL DEFAULT 0
-        )
-    """)
-    conn.commit()
-    return conn
+    global _conn, _conn_db_path
+    # Custom db_path (used by tests) — always create a fresh connection
+    if db_path:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute(_CREATE_TABLE_SQL)
+        conn.commit()
+        return conn
+    # Production — reuse the module-level connection (recreate if DB_PATH changed)
+    if _conn is None or _conn_db_path != DB_PATH:
+        if _conn is not None:
+            _conn.close()
+        _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        _conn.row_factory = sqlite3.Row
+        _conn.execute(_CREATE_TABLE_SQL)
+        _conn.commit()
+        _conn_db_path = DB_PATH
+    return _conn
+
+
+def close():
+    """Close the module-level database connection."""
+    global _conn, _conn_db_path
+    if _conn:
+        _conn.close()
+        _conn = None
+        _conn_db_path = None
 
 
 def _add_task(description: str, cron_expr: str, notify: bool = False,
               db_path: str = None) -> str:
     """Insert a new task and return its ID."""
     task_id = str(uuid.uuid4())[:8]
-    conn = _get_connection(db_path or DB_PATH)
+    conn = _get_connection(db_path)
     conn.execute(
         "INSERT INTO scheduled_tasks (id, description, cron_expr, created_at, notify) "
         "VALUES (?, ?, ?, ?, ?)",
         (task_id, description, cron_expr, datetime.now().isoformat(), int(notify)),
     )
     conn.commit()
-    conn.close()
+    if db_path:
+        conn.close()
     return task_id
 
 
 def _remove_task(task_id: str, db_path: str = None) -> bool:
     """Delete a task by ID. Returns True if a row was deleted."""
-    conn = _get_connection(db_path or DB_PATH)
+    conn = _get_connection(db_path)
     cursor = conn.execute("DELETE FROM scheduled_tasks WHERE id = ?", (task_id,))
     conn.commit()
     deleted = cursor.rowcount > 0
-    conn.close()
+    if db_path:
+        conn.close()
     return deleted
 
 
 def _list_tasks(db_path: str = None) -> list[dict]:
     """Return all tasks as a list of dicts."""
-    conn = _get_connection(db_path or DB_PATH)
+    conn = _get_connection(db_path)
     rows = conn.execute(
         "SELECT id, description, cron_expr, created_at, enabled, last_run, last_result, notify "
         "FROM scheduled_tasks ORDER BY created_at DESC"
     ).fetchall()
-    conn.close()
+    if db_path:
+        conn.close()
     return [dict(r) for r in rows]
 
 
 def _get_task(task_id: str, db_path: str = None) -> Optional[dict]:
     """Return a single task dict or None."""
-    conn = _get_connection(db_path or DB_PATH)
+    conn = _get_connection(db_path)
     row = conn.execute(
         "SELECT id, description, cron_expr, created_at, enabled, last_run, last_result, notify "
         "FROM scheduled_tasks WHERE id = ?", (task_id,)
     ).fetchone()
-    conn.close()
+    if db_path:
+        conn.close()
     return dict(row) if row else None
 
 
 def _update_task_result(task_id: str, result: str, db_path: str = None):
     """Update the last_run timestamp and last_result for a task."""
-    conn = _get_connection(db_path or DB_PATH)
+    conn = _get_connection(db_path)
     conn.execute(
         "UPDATE scheduled_tasks SET last_run = ?, last_result = ? WHERE id = ?",
         (datetime.now().isoformat(), result[:2000], task_id),
     )
     conn.commit()
-    conn.close()
+    if db_path:
+        conn.close()
 
 
 def _set_task_enabled(task_id: str, enabled: bool, db_path: str = None) -> bool:
     """Enable or disable a task. Returns True if the task exists."""
-    conn = _get_connection(db_path or DB_PATH)
+    conn = _get_connection(db_path)
     cursor = conn.execute(
         "UPDATE scheduled_tasks SET enabled = ? WHERE id = ?",
         (int(enabled), task_id),
     )
     conn.commit()
     updated = cursor.rowcount > 0
-    conn.close()
+    if db_path:
+        conn.close()
     return updated
 
 
@@ -208,7 +244,7 @@ async def _execute_task(task_id: str):
     try:
         session_id = f"scheduled-{task_id}-{uuid.uuid4().hex[:6]}"
         sidekick = Sidekick(session_id=session_id)
-        await sidekick.setup()
+        await sidekick.setup(include_browser=False)
 
         execution_prompt = (
             f"This is an automated scheduled task execution. "
@@ -243,7 +279,7 @@ async def _execute_task(task_id: str):
         # Optional push notification
         if task["notify"]:
             try:
-                from sidekick_tools import push
+                from tools.system import push
                 push(f"Scheduled task completed: {task['description']}\n\n{result_text[:500]}")
             except Exception as e:
                 log.warning("Push notification failed for task %s: %s", task_id, e)

@@ -1,6 +1,6 @@
-# ApexFlow — AI Research & Task Automation Assistant
+# ApexFlow — Multi-Agent AI Assistant
 
-ApexFlow is an autonomous AI agent with a conversational interface. Describe what you need and, optionally, define what success looks like — ApexFlow plans, uses tools, self-evaluates, and keeps working until the job is done.
+ApexFlow is an autonomous AI assistant built on a **hierarchical multi-agent architecture**. An orchestrator delegates tasks to six specialist agents — Research, Browser, Documents, Knowledge, Location, and System — each with its own focused tool set. Optionally define success criteria and an evaluator loop ensures the job is done right.
 
 It maintains persistent memory across sessions: it remembers facts about you and can resume previous conversations where you left off.
 
@@ -9,6 +9,55 @@ It maintains persistent memory across sessions: it remembers facts about you and
 ![Screenshot of the application](assets/ApexFlowScreenShot.png)
 
 ---
+
+## Architecture
+
+ApexFlow uses a **hierarchical orchestrator pattern** built on [LangGraph](https://github.com/langchain-ai/langgraph):
+
+```
+User input (task + optional success criteria)
+        │
+   ┌────┴─────┐
+   │ ORCHESTR.│  ◄──────────────────────────┐
+   └────┬─────┘                             │
+        │ delegates to agent?               │
+      yes │           no                    │
+   ┌─────┴──────┐   ┌───────────┐          │
+   │ SUB-AGENTS │   │ EVALUATOR │          │
+   │  (as tools)│   │ (optional)│          │
+   └─────┬──────┘   └─────┬─────┘          │
+         │                │                │
+         └────────────────┘                │
+                     met? │                │
+                   yes /   \ no            │
+                   END       └─────────────┘
+```
+
+1. The **orchestrator** (GPT-5.2) receives your task, user profile context, and a set of specialist agents exposed as callable tools.
+2. It delegates sub-tasks to the right agent with a clear instruction. Each agent has its own set of tools.
+3. When the orchestrator produces a response, the **evaluator** (GPT-5.2) checks it against your success criteria using structured output — but only if you provided explicit criteria. Without criteria, the evaluator is skipped entirely.
+4. If the criteria are not met, the evaluator feeds back and the orchestrator tries again.
+5. The loop ends when the task is complete or user input is needed.
+
+### Specialist Agents
+
+| Agent | Capabilities | Tools |
+|---|---|---|
+| **Research** | Web search, Wikipedia, arXiv papers, YouTube transcripts | Google Serper, Wikipedia API, arXiv API, YouTube Transcript API |
+| **Browser** | Navigate websites, click links, fill forms, extract content | Playwright (Chromium), screenshots, page extraction |
+| **Documents** | File management, PDFs, spreadsheets, charts | File I/O, PDF read/create, CSV/Excel, matplotlib charts |
+| **Knowledge** | Search and manage personal document collection | ChromaDB semantic search, document indexing |
+| **Location** | Address analysis, nearby amenities, commute times | Google Places, Maps, apartment search |
+| **System** | Task scheduling, notifications, Python execution | APScheduler, Pushover, Docker-sandboxed Python REPL |
+
+### Persistent memory
+
+- **Session history** — each conversation is stored in SQLite and can be resumed at any time.
+- **User profile** — facts learned about you (name, location, occupation, interests, preferred language, output format, technical level, etc.) are extracted automatically via LLM and injected into future sessions so ApexFlow always has context.
+- **Checkpoints** — LangGraph state is checkpointed to SQLite, enabling mid-conversation recovery.
+
+---
+
 ## What it can do
 
 ### Web & Internet
@@ -37,63 +86,19 @@ It maintains persistent memory across sessions: it remembers facts about you and
 - **Index management** — add, remove, and re-index documents; unchanged files are skipped automatically
 - **Grounded answers** — the agent retrieves relevant chunks from your documents to answer questions with source citations
 
-### Apartment Search Agent
+### Location & Apartment Search
 - **Family-friendly address analysis** — pass any address and get a comprehensive suitability report for families
 - **Nearby amenities** — automatically finds the nearest Grundschule, Kita, Supermarket, Cafe, Playground, and Restaurant with exact walking times and distances (via Google Distance Matrix API)
-- **Commute calculation** — calculates driving and public transport times to predefined work addresses (BMW and Workday offices in Munich)
-- **Area information** — searches the web for neighbourhood quality, livability, and family-friendliness ratings
-- **Interactive map** — generates a Leaflet/OpenStreetMap HTML map (`sandbox/apartment_search_map.html`) with color-coded markers for home, amenities, and work locations, each with info popups
+- **Commute calculation** — calculates driving and public transport times to predefined work addresses
+- **Interactive map** — generates a Leaflet/OpenStreetMap HTML map with color-coded markers for home, amenities, and work locations
 
 ### Code & Computation
-- **Python execution** — run sandboxed Python code for calculations, data processing, or scripting
+- **Python execution** — run Python code in a Docker-sandboxed container for calculations, data processing, or scripting. Each execution spins up an ephemeral container with network disabled, memory limits, and CPU caps — the host machine is never exposed to arbitrary code.
 
 ### Task Scheduling
 - **Schedule tasks** — set up recurring background jobs with cron expressions (e.g. "check the news every morning at 8 AM")
 - **List & cancel tasks** — view all scheduled tasks with their status and last results, or cancel them by ID
 - **Push notification integration** — optionally get notified via Pushover when a scheduled task produces results
-
-### Notifications
-- **Push notifications** — send alerts to your phone via Pushover when a long-running task completes
-
-### Memory & Context
-- **User profile** — automatically learns and remembers facts about you (name, location, preferences, technical level, etc.) across sessions
-- **Session history** — each conversation is stored in SQLite and can be resumed at any time
-
----
-
-## How it works
-
-ApexFlow uses a **worker–evaluator loop** built on [LangGraph](https://github.com/langchain-ai/langgraph):
-
-```
-User input (task + success criteria)
-        |
-    +--------+
-    | WORKER |  <--------------------------+
-    +---+----+                            |
-        | tool calls?                     |
-      yes |           no                  |
-    +-----+-----+   +-----------+         |
-    |   TOOLS   |   | EVALUATOR |         |
-    +-----+-----+   +-----+-----+         |
-          |               |               |
-          +---------------+               |
-                    met? |                |
-                  yes /   \ no            |
-                  END       +-------------+
-```
-
-1. The **worker** (GPT-5.2) receives your task, any success criteria, user profile context, and a set of tools it can use.
-2. If a tool is needed (browser, search, code execution, etc.), it runs and control returns to the worker.
-3. Once the worker produces a response, the **evaluator** (GPT-5.2) checks it against your success criteria using structured output.
-4. If the criteria are not met, the evaluator feeds back and the worker tries again.
-5. The loop ends when the task is complete or the agent needs your input.
-
-### Persistent memory
-
-- **Session history** — each conversation is stored in SQLite and can be resumed at any time.
-- **User profile** — facts learned about you (name, location, occupation, interests, preferred language, output format, technical level, etc.) are extracted automatically via LLM and injected into future sessions so ApexFlow always has context.
-- **Checkpoints** — LangGraph state is checkpointed to SQLite, enabling mid-conversation recovery.
 
 ---
 
@@ -103,6 +108,7 @@ User input (task + success criteria)
 
 - Python 3.12+
 - [uv](https://github.com/astral-sh/uv) package manager
+- [Docker](https://docs.docker.com/get-docker/) (required for the sandboxed Python REPL)
 - A Chromium-compatible browser (installed automatically by Playwright)
 
 ### Install dependencies
@@ -111,6 +117,16 @@ User input (task + success criteria)
 uv sync
 playwright install chromium
 ```
+
+### Build the Python sandbox image
+
+The sandboxed Python REPL runs code inside an ephemeral Docker container. Build the image once:
+
+```bash
+docker build -f Dockerfile.python-sandbox -t apexflow-python-sandbox .
+```
+
+The image is also auto-built on first REPL invocation if it doesn't exist, but pre-building avoids the initial delay.
 
 ### Configure API keys
 
@@ -194,7 +210,7 @@ uv run pytest --cov --cov-report=html
 2. Select an existing session from the dropdown or create a new one with **+ New Session**.
 3. Optionally rename the session to something meaningful.
 4. Type your task in the **message** field.
-5. Optionally describe your **success criteria** — what does "done" look like?
+5. Optionally describe your **success criteria** — what does "done" look like? When provided, an evaluator checks the response and loops the orchestrator if criteria are not met.
 6. Click **Go!** and watch ApexFlow work, including live tool call feedback in the chat.
 7. Use **Reset** to clear the current session's in-progress context.
 
@@ -205,22 +221,40 @@ uv run pytest --cov --cov-report=html
 ```
 AI-Assistant/
 ├── app.py               # Gradio web UI and application entry point
-├── sidekick.py          # Core agent: worker, evaluator, LangGraph state machine
-├── sidekick_tools.py    # Tool integrations (browser, search, files, code, notifications)
-├── apartment_search.py  # Apartment search agent: amenity finder, commute calculator, map generator
-├── knowledge.py         # Knowledge base: document chunking, embedding, ChromaDB vector search
-├── scheduler.py         # Task scheduling: SQLite-backed cron tasks with APScheduler
-├── session_manager.py   # SQLite-backed session creation, listing, and renaming
+├── sidekick.py          # Orchestrator: multi-agent LangGraph state machine
+├── config.py            # Centralized configuration and constants
+├── agents/              # Specialist sub-agents (one per domain)
+│   ├── base.py          # BaseAgent: create_react_agent wrapper with run()
+│   ├── research.py      # ResearchAgent
+│   ├── browser.py       # BrowserAgent (async lifecycle management)
+│   ├── documents.py     # DocumentsAgent
+│   ├── knowledge.py     # KnowledgeAgent
+│   ├── location.py      # LocationAgent
+│   └── system.py        # SystemAgent
+├── tools/               # Tool modules grouped by domain
+│   ├── research.py      # Web search, Wikipedia, arXiv, YouTube transcripts
+│   ├── browser.py       # Playwright browser automation factory
+│   ├── documents.py     # File I/O, PDF read/create, spreadsheets, charts
+│   ├── docker_repl.py   # Docker-sandboxed Python REPL (BaseTool)
+│   ├── knowledge_tools.py  # Knowledge base search, indexing, management
+│   ├── location.py      # Google Places, apartment search (conditional)
+│   └── system.py        # Push notifications, Python REPL, task scheduling
+├── Dockerfile.python-sandbox  # Docker image for sandboxed Python execution
+├── apartment_search.py  # Apartment analysis: amenities, commute, map
+├── knowledge.py         # Knowledge base: chunking, embedding, ChromaDB
+├── scheduler.py         # Task scheduling: SQLite + APScheduler
+├── session_manager.py   # SQLite-backed session management
 ├── user_profile.py      # Persistent key-value store for user facts
-├── readdb.py            # Database inspection utility (development tool)
 ├── pyproject.toml       # Project metadata and dependencies
 ├── .env                 # API keys and configuration (not committed)
 ├── sandbox/             # Working directory for agent file operations
 │   └── knowledge/       # Drop documents here for knowledge base indexing
 └── tests/
-    ├── conftest.py            # Shared fixtures (mock LLMs, sandbox, sample PDF)
-    ├── test_tools_unit.py     # Unit tests for all tools in sidekick_tools.py
-    └── test_apartment_search.py  # Unit tests for the apartment search agent
+    ├── conftest.py            # Shared fixtures
+    ├── test_tools_unit.py     # Unit tests for tools/ modules
+    ├── test_knowledge.py      # Unit tests for knowledge base
+    ├── test_scheduler.py      # Unit tests for task scheduler
+    └── test_apartment_search.py  # Unit tests for apartment search
 ```
 
 ### Key files
@@ -228,14 +262,17 @@ AI-Assistant/
 | File | Role |
 |---|---|
 | [app.py](app.py) | Launches the Gradio interface, wires UI events, manages the agent lifecycle |
-| [sidekick.py](sidekick.py) | Defines the `Sidekick` class, LangGraph state machine (3-node graph), worker and evaluator nodes, user profile extraction, and persistent memory |
-| [sidekick_tools.py](sidekick_tools.py) | Registers all tools: Playwright browser automation, Google Serper search, file I/O (sandbox), Python REPL, Wikipedia, arXiv, YouTube transcripts, PDF read/create, Pushover notifications, CSV/Excel read/write, PNG chart generation, task scheduling, knowledge base search, apartment search |
-| [apartment_search.py](apartment_search.py) | Apartment search agent: finds nearby family amenities with walking times, calculates commute to work, generates interactive Leaflet map |
-| [knowledge.py](knowledge.py) | Document chunking, OpenAI embedding, ChromaDB vector storage, semantic search over local files |
+| [sidekick.py](sidekick.py) | Orchestrator: wraps sub-agents as tools, builds LangGraph state machine, optional evaluator loop |
+| [config.py](config.py) | Centralizes all constants (DB paths, model name, sandbox dir) and loads `.env` |
+| [agents/base.py](agents/base.py) | `BaseAgent` class using `create_react_agent` with async `run()` method |
+| [tools/](tools/) | Domain-specific tool modules, each with a `get_tools()` function |
+| [tools/docker_repl.py](tools/docker_repl.py) | `DockerPythonREPL`: executes Python in ephemeral Docker containers with resource limits |
+| [Dockerfile.python-sandbox](Dockerfile.python-sandbox) | Lightweight Python 3.12 image used by the sandboxed REPL |
+| [apartment_search.py](apartment_search.py) | Finds nearby family amenities with walking times, calculates commute, generates interactive map |
+| [knowledge.py](knowledge.py) | Document chunking, OpenAI embedding, ChromaDB vector storage, semantic search |
 | [scheduler.py](scheduler.py) | SQLite-backed task scheduling with cron expressions; persists tasks, validates cron, tracks results |
 | [session_manager.py](session_manager.py) | Creates, lists, and renames named sessions backed by SQLite |
 | [user_profile.py](user_profile.py) | Stores and retrieves persistent facts about the user across sessions |
-| [readdb.py](readdb.py) | Reads and displays contents of the chat history and checkpoint databases (for debugging) |
 
 ---
 
@@ -243,8 +280,9 @@ AI-Assistant/
 
 | Layer | Technology |
 |---|---|
-| LLM | OpenAI GPT-5.2 (worker + evaluator) |
-| Agent orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) with SQLite checkpointing |
+| LLM | OpenAI GPT-5.2 (orchestrator + evaluator) |
+| Agent orchestration | [LangGraph](https://github.com/langchain-ai/langgraph) with hierarchical multi-agent pattern and SQLite checkpointing |
+| Sub-agents | `create_react_agent` from LangGraph prebuilt, wrapped as LangChain `Tool` objects |
 | Browser automation | [Playwright](https://playwright.dev/) via LangChain toolkit |
 | UI | [Gradio](https://www.gradio.app/) |
 | Search | Google Serper, Wikipedia, arXiv, Google Places / Maps APIs |
@@ -256,7 +294,7 @@ AI-Assistant/
 | Task scheduling | [APScheduler](https://apscheduler.readthedocs.io/) with SQLite persistence |
 | Notifications | [Pushover](https://pushover.net/) |
 | Persistence | SQLite (sessions, chat history, user profile, checkpoints) |
-| Code execution | LangChain PythonREPLTool (sandboxed) |
+| Code execution | Docker-sandboxed Python REPL (ephemeral containers, network-disabled, resource-limited) |
 | Observability | LangSmith |
 | Package management | [uv](https://github.com/astral-sh/uv) |
 

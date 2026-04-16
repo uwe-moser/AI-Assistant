@@ -6,6 +6,9 @@ from sidekick import Sidekick
 from session_manager import SessionManager
 from scheduler import _list_tasks, _remove_task, TaskRunner
 from knowledge import KnowledgeBase
+from config import DB_PATH, SANDBOX_DIR
+import jobs
+import interview
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -23,7 +26,7 @@ def get_dropdown_choices():
 def get_history_for_session(session_id):
     hist = SQLChatMessageHistory(
         session_id=session_id,
-        connection="sqlite:///sidekick_chat_history.db",
+        connection=f"sqlite:///{DB_PATH}",
     )
     result = []
     for msg in hist.messages:
@@ -86,6 +89,27 @@ def do_rename_session(session_id, name):
     if name.strip():
         session_manager.rename_session(session_id, name.strip())
     return gr.Dropdown(choices=get_dropdown_choices(), value=session_id)
+
+
+async def delete_and_switch(session_id, old_sidekick):
+    """Delete the current session and switch to another."""
+    free_resources(old_sidekick)
+    session_manager.delete_session(session_id)
+
+    new_session_id = session_manager.get_or_create_latest()
+    sidekick = Sidekick(session_id=new_session_id)
+    await sidekick.setup()
+    history = get_history_for_session(new_session_id)
+    choices = get_dropdown_choices()
+    session_info = session_manager.get_session(new_session_id)
+    session_name = session_info["name"] if session_info else ""
+    return (
+        sidekick,
+        new_session_id,
+        history,
+        gr.Dropdown(choices=choices, value=new_session_id),
+        session_name,
+    )
 
 
 async def reset(session_id, old_sidekick):
@@ -167,37 +191,110 @@ def load_knowledge_base_docs():
     return [[source, str(count)] for source, count in sorted(doc_chunks.items())]
 
 
+# ── Job search panel helpers ─────────────────────────────────────────────────
+
+def load_jobs_table(status_filter: str = "all"):
+    """Return job pipeline rows for the Dataframe."""
+    status = None if status_filter == "all" else status_filter
+    rows = jobs.list_jobs(status=status, limit=100)
+    return [
+        [
+            j["id"],
+            j["status"],
+            f"{j['match_score']:.0f}" if j.get("match_score") is not None else "—",
+            j["title"] or "",
+            j["company"] or "",
+            j["location"] or "",
+            j["apply_url"] or "",
+        ]
+        for j in rows
+    ]
+
+
+def load_interview_sessions_table():
+    """Return interview session rows for the Dataframe."""
+    sessions = interview.list_sessions()
+    rows = []
+    for s in sessions:
+        turns = interview.get_turns(s["id"])
+        answered = sum(1 for t in turns if t.get("answer"))
+        rows.append([
+            s["id"],
+            s["status"],
+            s.get("title") or "",
+            f"{answered}/{len(turns)}",
+            f"{s['overall_score']:.0f}" if s.get("overall_score") is not None else "—",
+            s.get("created_at", ""),
+        ])
+    return rows
+
+
+def upload_application_sources(files):
+    """Copy uploaded CV/LinkedIn PDFs to the sandbox root."""
+    if not files:
+        return "No files selected."
+    import shutil as _shutil
+    os.makedirs(SANDBOX_DIR, exist_ok=True)
+    names = []
+    for file_path in files:
+        filename = os.path.basename(file_path)
+        dest = os.path.join(SANDBOX_DIR, filename)
+        _shutil.copy2(file_path, dest)
+        names.append(filename)
+    return (
+        f"Uploaded to {SANDBOX_DIR}/: " + ", ".join(names) +
+        ". Now ask the assistant: 'Ingest my CV and LinkedIn profile' "
+        "(referencing these filenames)."
+    )
+
+
+def show_profile_summary():
+    """Return a concise summary of the stored candidate profile."""
+    profile = jobs.get_profile()
+    if not profile:
+        return "No candidate profile stored yet. Upload a CV + LinkedIn PDF above and ask the assistant to ingest them."
+    import json as _json
+    lines = [f"Top-level keys: {', '.join(profile.keys())}"]
+    if "name" in profile:
+        lines.append(f"Name: {profile['name']}")
+    if "summary" in profile:
+        lines.append(f"Summary: {str(profile['summary'])[:300]}")
+    if "experience" in profile and isinstance(profile["experience"], list):
+        lines.append(f"Experience entries: {len(profile['experience'])}")
+    if "skills" in profile:
+        lines.append(f"Skills: {_json.dumps(profile['skills'], ensure_ascii=False)[:300]}")
+    return "\n".join(lines)
+
+
 with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) as ui:
     gr.HTML(f"""
 <div style="display: flex; align-items: center; gap: 24px; margin-bottom: 4px; width: 100%;">
   <img src="data:image/png;base64,{_logo_b64}" style="height: 180px; width: auto; flex-shrink: 0;">
   <div style="flex: 1; min-width: 0;">
     <p class="header-desc" style="margin: 0; font-size: 16px; color: #444; line-height: 1.6;">
-      Apex Flow is a high-performance information retrieval and processing assistant. It is designed to provide evidence-based answers to complex technical queries by integrating real-time web access, sandboxed code execution, and deep-file indexing into a single conversational interface.
-      Rather than relying solely on internal model weights, Apex Flow leverages a suite of specialized tools to verify facts, process local data, and cite academic sources in real-time.
+      ApexFlow is a multi-agent AI assistant powered by a hierarchical orchestrator architecture.
+      An orchestrator delegates tasks to six specialist agents — Research, Browser, Documents, Knowledge, Location, and System — each with its own focused tool set.
+      This design enables efficient, evidence-based answers to complex queries by combining real-time web access, sandboxed code execution, document search, and task automation.
     </p>
   </div>
 </div>
 """)
     gr.HTML("""
 <style>
-  .cap-chip {
-    background: #f3f0ff; border: 1px solid #d8d0f0; border-radius: 16px;
-    padding: 4px 12px; font-size: 13px; cursor: default; position: relative;
-    transition: background 0.15s; color: #333;
+  .agent-card {
+    background: #f8f6ff; border: 1px solid #e0d8f0; border-radius: 12px;
+    padding: 12px 16px; font-size: 13px; color: #333; line-height: 1.5;
   }
-  .cap-chip:hover { background: #e8e0ff; }
-  .cap-chip .cap-tip {
-    visibility: hidden; opacity: 0; transition: opacity 0.15s;
-    position: absolute; bottom: calc(100% + 6px); left: 0;
-    background: #333; color: #fff; padding: 5px 10px; border-radius: 6px;
-    font-size: 12px; white-space: nowrap; pointer-events: none; z-index: 10;
+  .agent-card .agent-name {
+    font-weight: 700; font-size: 14px; margin-bottom: 4px; color: #5b21b6;
   }
-  .cap-chip:hover .cap-tip { visibility: visible; opacity: 1; }
+  .agent-card .agent-tools {
+    font-size: 12px; color: #666; margin-top: 4px;
+  }
   @media (prefers-color-scheme: dark) {
-    .cap-chip { background: #2d2640; border-color: #4a3d70; color: #e0d8ff; }
-    .cap-chip:hover { background: #3d3360; }
-    .cap-cat-label { color: #9b8fc0 !important; }
+    .agent-card { background: #2d2640; border-color: #4a3d70; color: #e0d8ff; }
+    .agent-card .agent-name { color: #c4b8e8; }
+    .agent-card .agent-tools { color: #9b8fc0; }
     .cap-section-title { color: #c4b8e8 !important; }
     .header-desc { color: #ccc !important; }
   }
@@ -207,53 +304,55 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
   #rename-btn, #rename-btn button { width: fit-content !important; min-width: 0 !important; }
 </style>
 <div style="margin-bottom: 12px;">
-  <div class="cap-section-title" style="font-weight: 600; font-size: 14px; color: #555; margin-bottom: 8px;">🛠️ Capabilities</div>
-  <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 16px;">
+  <div class="cap-section-title" style="font-weight: 600; font-size: 14px; color: #555; margin-bottom: 8px;">Specialist Agents</div>
+  <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
 
-    <div>
-      <div class="cap-cat-label" style="font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Web &amp; Internet</div>
-      <div style="display: flex; flex-wrap: wrap; gap: 5px;">
-        <span class="cap-chip">🌐 Web Navigation<span class="cap-tip">Browse the internet, navigate to URLs, and extract information from web pages</span></span>
-        <span class="cap-chip">🔍 Data Extraction<span class="cap-tip">Extract text and hyperlinks from web pages, search for files in directories</span></span>
-        <span class="cap-chip">🎬 YouTube Transcripts<span class="cap-tip">Fetch transcripts from YouTube videos for summarisation and analysis</span></span>
-        <span class="cap-chip">📍 Google Places<span class="cap-tip">Search for places and points of interest using Google Maps — get names, addresses, phone numbers, and websites</span></span>
-      </div>
+    <div class="agent-card">
+      <div class="agent-name">Research Agent</div>
+      Web search, Wikipedia, arXiv papers, YouTube transcripts
+      <div class="agent-tools">Tools: Google Search, Wikipedia, arXiv, YouTube Transcript API</div>
     </div>
 
-    <div>
-      <div class="cap-cat-label" style="font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Files &amp; Documents</div>
-      <div style="display: flex; flex-wrap: wrap; gap: 5px;">
-        <span class="cap-chip">📁 File Management<span class="cap-tip">Read, write, move, copy, and delete files on disk</span></span>
-        <span class="cap-chip">📄 PDF Reader<span class="cap-tip">Extract and read text content from PDF files</span></span>
-        <span class="cap-chip">📝 PDF Creator<span class="cap-tip">Generate proper, openable PDF files with formatted content</span></span>
-      </div>
+    <div class="agent-card">
+      <div class="agent-name">Browser Agent</div>
+      Navigate websites, click links, fill forms, extract content
+      <div class="agent-tools">Tools: Playwright (Chromium), screenshots, page extraction</div>
     </div>
 
-    <div>
-      <div class="cap-cat-label" style="font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Structured Data</div>
-      <div style="display: flex; flex-wrap: wrap; gap: 5px;">
-        <span class="cap-chip">📊 Spreadsheet Reader<span class="cap-tip">Read CSV and Excel files from the sandbox — get column names, row count, and a data preview</span></span>
-        <span class="cap-chip">📋 Spreadsheet Writer<span class="cap-tip">Create CSV or Excel files in the sandbox from structured data (headers + rows)</span></span>
-        <span class="cap-chip">📈 Chart Generator<span class="cap-tip">Generate PNG bar, line, pie, or scatter charts from any dataset and save to the sandbox</span></span>
-      </div>
+    <div class="agent-card">
+      <div class="agent-name">Documents Agent</div>
+      File management, PDFs, spreadsheets, charts
+      <div class="agent-tools">Tools: File I/O, PDF read/create, CSV/Excel, matplotlib charts</div>
     </div>
 
-    <div>
-      <div class="cap-cat-label" style="font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Research</div>
-      <div style="display: flex; flex-wrap: wrap; gap: 5px;">
-        <span class="cap-chip">📖 Wikipedia<span class="cap-tip">Retrieve information from Wikipedia for general knowledge queries</span></span>
-        <span class="cap-chip">🎓 arXiv Search<span class="cap-tip">Search and retrieve academic papers from arXiv</span></span>
-        <span class="cap-chip">🧠 Knowledge Base<span class="cap-tip">Search your own indexed documents (PDFs, notes, markdown, CSV) with semantic search</span></span>
-      </div>
+    <div class="agent-card">
+      <div class="agent-name">Knowledge Agent</div>
+      Search and manage your personal document collection
+      <div class="agent-tools">Tools: ChromaDB semantic search, document indexing</div>
     </div>
 
-    <div>
-      <div class="cap-cat-label" style="font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Utilities</div>
-      <div style="display: flex; flex-wrap: wrap; gap: 5px;">
-        <span class="cap-chip">🐍 Python Execution<span class="cap-tip">Run Python code to perform calculations or process data</span></span>
-        <span class="cap-chip">🔔 Push Notifications<span class="cap-tip">Send push notifications to keep you updated on task progress</span></span>
-        <span class="cap-chip">⏰ Task Scheduling<span class="cap-tip">Schedule recurring background tasks with cron expressions — e.g. "check the news every morning"</span></span>
-      </div>
+    <div class="agent-card">
+      <div class="agent-name">Location Agent</div>
+      Address analysis, nearby amenities, commute times
+      <div class="agent-tools">Tools: Google Places, Maps, apartment search</div>
+    </div>
+
+    <div class="agent-card">
+      <div class="agent-name">System Agent</div>
+      Task scheduling, notifications, Python execution
+      <div class="agent-tools">Tools: APScheduler, Pushover, Python REPL</div>
+    </div>
+
+    <div class="agent-card">
+      <div class="agent-name">Job Search Agent</div>
+      Find jobs, manage CV profile, tailor applications (discover-only)
+      <div class="agent-tools">Tools: Adzuna, Serper, ranking, CV/cover-letter tailoring</div>
+    </div>
+
+    <div class="agent-card">
+      <div class="agent-name">Interview Coach</div>
+      Run mock interviews tied to a specific job, score answers
+      <div class="agent-tools">Tools: question planning, per-answer scoring, summary</div>
     </div>
 
   </div>
@@ -275,7 +374,9 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
                     choices=[],
                     interactive=True,
                 )
-                new_session_btn = gr.Button("+ New Session", variant="primary", elem_id="new-session-btn")
+                with gr.Row():
+                    new_session_btn = gr.Button("+ New Session", variant="primary", elem_id="new-session-btn")
+                    delete_session_btn = gr.Button("Delete Session", variant="stop", elem_id="delete-session-btn")
             with gr.Column(scale=3):
                 session_name_input = gr.Textbox(
                     label="Current Session",
@@ -314,6 +415,61 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
         with gr.Row():
             kb_status = gr.Textbox(label="Status", interactive=False, scale=3)
             kb_reindex_btn = gr.Button("Re-index", variant="secondary", scale=1)
+
+    # Job Search panel (discover-only)
+    with gr.Accordion("Job Search", open=False):
+        gr.Markdown(
+            "**Discover-only.** The assistant finds and ranks jobs, and prepares "
+            "tailored CVs/cover letters in `sandbox/job_applications/<job_id>/`. "
+            "It never submits anything — you click apply manually."
+        )
+        with gr.Row():
+            profile_upload = gr.File(
+                label="Upload CV and LinkedIn profile PDFs",
+                file_count="multiple",
+                file_types=[".pdf"],
+                scale=3,
+            )
+            profile_status = gr.Textbox(label="Upload status", interactive=False, scale=2)
+        with gr.Row():
+            profile_summary = gr.Textbox(
+                label="Current candidate profile",
+                interactive=False,
+                lines=6,
+                scale=3,
+            )
+            refresh_profile_btn = gr.Button("Refresh profile", variant="secondary", scale=1)
+
+        with gr.Row():
+            jobs_status_filter = gr.Dropdown(
+                label="Filter by status",
+                choices=["all"] + list(jobs.PIPELINE_STATUSES),
+                value="all",
+                scale=1,
+            )
+            refresh_jobs_btn = gr.Button("Refresh jobs", variant="secondary", scale=1)
+        jobs_table = gr.Dataframe(
+            headers=["ID", "Status", "Score", "Title", "Company", "Location", "Apply URL"],
+            datatype=["str", "str", "str", "str", "str", "str", "str"],
+            interactive=False,
+            label="Job pipeline",
+            wrap=True,
+        )
+
+    # Interview practice panel
+    with gr.Accordion("Interview Practice", open=False):
+        gr.Markdown(
+            "Ask the assistant to **start an interview for job [id]** to begin a "
+            "practice session. It runs in the chat above — answers are scored here."
+        )
+        refresh_interviews_btn = gr.Button("Refresh sessions", variant="secondary")
+        interviews_table = gr.Dataframe(
+            headers=["Session", "Status", "Title", "Answered", "Overall", "Created"],
+            datatype=["str", "str", "str", "str", "str", "str"],
+            interactive=False,
+            label="Interview sessions",
+            wrap=True,
+        )
 
     # Chat
     with gr.Row():
@@ -363,6 +519,13 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
         outputs=[session_dropdown],
     )
 
+    delete_session_btn.click(
+        delete_and_switch,
+        inputs=[current_session_id, sidekick],
+        outputs=[sidekick, current_session_id, chatbot, session_dropdown, session_name_input],
+        js="(session_id, sidekick) => { if (!confirm('Delete this session permanently?')) throw new Error('Cancelled'); return [session_id, sidekick]; }",
+    )
+
     message.submit(
         process_message,
         inputs=[sidekick, message, success_criteria, chatbot],
@@ -407,5 +570,24 @@ with gr.Blocks(title="ApexFlow", theme=gr.themes.Default(primary_hue="purple")) 
         outputs=[kb_status, kb_docs_table],
     )
 
+    # Job search panel wiring
+    ui.load(lambda: load_jobs_table("all"), inputs=[], outputs=[jobs_table])
+    ui.load(show_profile_summary, inputs=[], outputs=[profile_summary])
+    profile_upload.upload(
+        upload_application_sources,
+        inputs=[profile_upload],
+        outputs=[profile_status],
+    )
+    refresh_profile_btn.click(show_profile_summary, inputs=[], outputs=[profile_summary])
+    refresh_jobs_btn.click(load_jobs_table, inputs=[jobs_status_filter], outputs=[jobs_table])
+    jobs_status_filter.change(load_jobs_table, inputs=[jobs_status_filter], outputs=[jobs_table])
 
-ui.launch(inbrowser=True)
+    # Interview practice panel wiring
+    ui.load(load_interview_sessions_table, inputs=[], outputs=[interviews_table])
+    refresh_interviews_btn.click(
+        load_interview_sessions_table, inputs=[], outputs=[interviews_table]
+    )
+
+
+if __name__ == "__main__":
+    ui.launch(inbrowser=True)

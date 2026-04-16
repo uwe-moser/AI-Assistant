@@ -269,19 +269,16 @@ class TestCancelScheduledTask:
 
 
 # ===================================================================
-# Tool registration in other_tools()
+# Scheduler tools registered in tools/system.py
 # ===================================================================
 
 class TestSchedulerToolRegistration:
-    """Verify scheduling tools are registered in other_tools()."""
+    """Verify scheduling tools are registered in the system tools module."""
 
-    @pytest.mark.asyncio
-    async def test_contains_scheduler_tool_names(self):
-        from unittest.mock import patch
-        from sidekick_tools import other_tools
-        with patch("sidekick_tools.serper"):
-            tools = await other_tools()
-            names = {t.name for t in tools}
-            expected = {"schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"}
-            missing = expected - names
-            assert not missing, f"Missing tools: {missing}"
+    def test_contains_scheduler_tool_names(self):
+        from tools.system import get_tools
+        tools = get_tools()
+        names = {t.name for t in tools}
+        expected = {"schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"}
+        missing = expected - names
+        assert not missing, f"Missing tools: {missing}"
