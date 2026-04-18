@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ApexFlow — Multi-agent orchestration, on your machine.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,300;1,9..144,400;1,9..144,500;1,9..144,600&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0B0A09;
+    --ink-2:#131210;
+    --ink-3:#1B1916;
+    --line:#2A2724;
+    --line-2:#3A3531;
+    --bone:#F4EFE6;
+    --bone-2:#D9D1C2;
+    --muted:#8A857C;
+    --muted-2:#6A655D;
+    --accent:#B19CFF;        /* luminous violet */
+    --accent-2:#7C3AED;      /* deep amethyst */
+    --serif:"Fraunces", ui-serif, Georgia, serif;
+    --sans:"Instrument Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    --mono:"JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{background:var(--ink);color:var(--bone);font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  body{
+    background:
+      radial-gradient(1200px 700px at 80% -10%, rgba(177,156,255,.08), transparent 60%),
+      radial-gradient(900px 600px at -10% 30%, rgba(124,58,237,.06), transparent 60%),
+      var(--ink);
+    background-attachment: fixed;
+    overflow-x:hidden;
+  }
+  /* Subtle grain */
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.06 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    opacity:.5;mix-blend-mode:overlay;
+  }
+  a{color:inherit;text-decoration:none}
+  img,svg{display:block}
+  ::selection{background:var(--accent);color:var(--ink)}
+
+  .wrap{max-width:1320px;margin:0 auto;padding:0 32px;position:relative;z-index:2}
+  .mono{font-family:var(--mono);font-weight:500;letter-spacing:.02em;text-transform:uppercase;font-size:11px;color:var(--muted)}
+  .rule{height:1px;background:var(--line);width:100%}
+
+  /* ── Top nav ── */
+  nav.top{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:22px 0;border-bottom:1px solid var(--line);
+    position:sticky;top:0;z-index:50;
+    background:linear-gradient(to bottom, rgba(11,10,9,.92), rgba(11,10,9,.78));
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  }
+  .brand{display:flex;align-items:center;gap:14px}
+  .brand .mark{
+    width:34px;height:34px;border-radius:9px;background:var(--bone);color:var(--ink);
+    display:grid;place-items:center;font-family:var(--serif);font-weight:600;font-style:italic;
+    font-size:20px;letter-spacing:-.03em;
+    box-shadow:inset 0 0 0 1px rgba(0,0,0,.1), 0 6px 22px -6px rgba(177,156,255,.35);
+  }
+  .brand .name{font-family:var(--serif);font-size:20px;font-weight:500;letter-spacing:-.01em}
+  .brand .name em{font-style:italic;color:var(--accent);font-weight:400}
+  .nav-meta{display:flex;gap:28px;align-items:center}
+  .nav-meta a{font-size:13px;color:var(--bone-2);position:relative}
+  .nav-meta a:hover{color:var(--accent)}
+  .nav-cta{
+    font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.1em;
+    padding:9px 14px;border:1px solid var(--line-2);border-radius:999px;
+    transition:all .25s ease;
+  }
+  .nav-cta:hover{border-color:var(--accent);color:var(--accent)}
+
+  /* ── Hero ── */
+  header.hero{padding:90px 0 70px;position:relative}
+  .hero-grid{display:grid;grid-template-columns:1.45fr .9fr;gap:80px;align-items:end}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:10px;
+    font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);
+    margin-bottom:36px;
+  }
+  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 14px var(--accent)}
+  h1.headline{
+    font-family:var(--serif);
+    font-weight:400;font-size:clamp(54px, 8vw, 122px);line-height:.93;letter-spacing:-.035em;
+    color:var(--bone);
+  }
+  h1.headline em{font-style:italic;color:var(--accent);font-weight:400;font-variation-settings:"opsz" 144}
+  h1.headline span.thin{font-weight:300;color:var(--bone-2)}
+  .lede{
+    font-size:18px;line-height:1.55;color:var(--bone-2);max-width:38ch;margin-bottom:36px;
+    font-weight:400;
+  }
+  .lede strong{color:var(--bone);font-weight:500}
+  .cta-row{display:flex;gap:14px;flex-wrap:wrap}
+  .btn{
+    display:inline-flex;align-items:center;gap:10px;
+    padding:15px 22px;border-radius:999px;font-size:14px;font-weight:500;
+    transition:transform .25s ease, background .25s ease, color .25s ease;
+    will-change:transform;
+  }
+  .btn-primary{background:var(--accent);color:var(--ink)}
+  .btn-primary:hover{background:var(--bone);transform:translateY(-2px)}
+  .btn-ghost{border:1px solid var(--line-2);color:var(--bone)}
+  .btn-ghost:hover{border-color:var(--bone);transform:translateY(-2px)}
+  .btn svg{width:14px;height:14px}
+
+  /* Hero side: live status panel */
+  .status-card{
+    border:1px solid var(--line);background:linear-gradient(180deg, var(--ink-2), var(--ink));
+    border-radius:18px;padding:22px;font-family:var(--mono);font-size:12px;color:var(--bone-2);
+    box-shadow:0 30px 80px -40px rgba(0,0,0,.7);position:relative;overflow:hidden;
+  }
+  .status-card::after{
+    content:"";position:absolute;inset:0;border-radius:18px;pointer-events:none;
+    background:linear-gradient(135deg, rgba(177,156,255,.12), transparent 30%);
+  }
+  .status-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed var(--line)}
+  .status-row:last-child{border-bottom:0}
+  .status-row .k{color:var(--muted);text-transform:uppercase;letter-spacing:.1em;font-size:10px}
+  .status-row .v{color:var(--bone)}
+  .ring{
+    width:9px;height:9px;border-radius:50%;background:var(--accent);
+    box-shadow:0 0 0 4px rgba(177,156,255,.18);
+    animation:pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 4px rgba(177,156,255,.15)}50%{box-shadow:0 0 0 8px rgba(177,156,255,.05)}}
+  .status-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+  .status-title b{font-family:var(--serif);font-weight:500;color:var(--bone);font-style:italic;font-size:15px;text-transform:none;letter-spacing:0}
+
+  /* Marquee strip */
+  .strip{
+    border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+    padding:18px 0;overflow:hidden;display:flex;gap:60px;align-items:center;
+    font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);
+    white-space:nowrap;
+    mask-image:linear-gradient(90deg,transparent,#000 10%,#000 90%,transparent);
+  }
+  .strip-track{display:flex;gap:60px;animation:scroll 38s linear infinite;flex-shrink:0}
+  .strip-track span{display:inline-flex;align-items:center;gap:14px}
+  .strip-track .dot{width:4px;height:4px;background:var(--accent);border-radius:50%}
+  @keyframes scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+
+  /* ── Section header ── */
+  .sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:40px;margin-bottom:60px}
+  .sec-head h2{
+    font-family:var(--serif);font-weight:400;font-size:clamp(34px,4.4vw,58px);
+    letter-spacing:-.02em;line-height:1;color:var(--bone);max-width:18ch;
+  }
+  .sec-head h2 em{font-style:italic;color:var(--accent)}
+  .sec-head p{color:var(--muted);max-width:42ch;font-size:15px;line-height:1.55}
+  .sec-num{
+    font-family:var(--mono);font-size:11px;color:var(--muted);
+    letter-spacing:.2em;text-transform:uppercase;margin-bottom:18px;
+  }
+
+  /* ── Architecture viz ── */
+  section.arch{padding:120px 0 100px;border-top:1px solid var(--line)}
+  .arch-frame{
+    border:1px solid var(--line);border-radius:24px;padding:60px 48px;
+    background:
+      radial-gradient(800px 400px at 50% 20%, rgba(177,156,255,.08), transparent 60%),
+      linear-gradient(180deg, var(--ink-2), var(--ink));
+    position:relative;overflow:hidden;
+  }
+  .arch-frame::before{
+    content:"";position:absolute;inset:0;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size:48px 48px;
+    mask-image:radial-gradient(ellipse at center, #000 30%, transparent 75%);
+    opacity:.35;pointer-events:none;
+  }
+  .orch{
+    display:flex;flex-direction:column;align-items:center;gap:18px;margin-bottom:50px;position:relative;
+  }
+  .orch-badge{
+    font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--accent);
+  }
+  .orch-pill{
+    display:inline-flex;align-items:center;gap:14px;
+    padding:18px 34px;border-radius:999px;
+    background:var(--bone);color:var(--ink);
+    font-family:var(--serif);font-weight:500;font-size:24px;font-style:italic;letter-spacing:-.01em;
+    box-shadow:0 30px 60px -30px rgba(177,156,255,.5), inset 0 0 0 1px rgba(0,0,0,.08);
+    position:relative;
+  }
+  .orch-pill::before{
+    content:"";position:absolute;inset:-6px;border-radius:999px;border:1px dashed var(--line-2);
+    animation:rot 30s linear infinite;
+  }
+  @keyframes rot{to{transform:rotate(360deg)}}
+  .orch-sub{font-size:13px;color:var(--muted);max-width:34ch;text-align:center;line-height:1.55}
+
+  .agent-bus{
+    height:1px;background:linear-gradient(90deg, transparent, var(--line-2) 20%, var(--accent) 50%, var(--line-2) 80%, transparent);
+    margin:0 auto 50px;max-width:80%;position:relative;
+  }
+  .agent-bus::before,.agent-bus::after{
+    content:"";position:absolute;top:-3px;width:7px;height:7px;background:var(--accent);border-radius:50%;
+    box-shadow:0 0 14px var(--accent);
+  }
+  .agent-bus::before{left:30%;animation:flow 4s ease-in-out infinite}
+  .agent-bus::after{left:70%;animation:flow 4s ease-in-out infinite reverse;animation-delay:1s}
+  @keyframes flow{0%,100%{opacity:0;transform:translateX(-40px)}50%{opacity:1;transform:translateX(40px)}}
+
+  .agent-grid{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:14px;overflow:hidden;position:relative;
+  }
+  .agent{
+    background:var(--ink-2);padding:26px 22px 22px;cursor:pointer;
+    transition:background .3s ease;position:relative;min-height:188px;
+  }
+  .agent:hover{background:var(--ink-3)}
+  .agent .num{
+    font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.18em;
+  }
+  .agent .icon{
+    width:32px;height:32px;margin:14px 0 14px;
+    display:grid;place-items:center;border-radius:8px;
+    background:rgba(177,156,255,.08);color:var(--accent);
+    border:1px solid rgba(177,156,255,.2);
+  }
+  .agent .icon svg{width:16px;height:16px}
+  .agent h3{
+    font-family:var(--serif);font-weight:500;font-size:19px;letter-spacing:-.01em;
+    color:var(--bone);margin-bottom:6px;
+  }
+  .agent h3 em{font-style:italic;color:var(--accent);font-weight:400}
+  .agent p{font-size:12.5px;color:var(--muted);line-height:1.5}
+  .agent .tools{
+    margin-top:14px;font-family:var(--mono);font-size:10px;color:var(--muted-2);
+    letter-spacing:.06em;line-height:1.6;
+    opacity:0;max-height:0;transition:opacity .3s ease, max-height .3s ease;
+  }
+  .agent:hover .tools{opacity:1;max-height:60px}
+
+  /* ── Features ── */
+  section.features{padding:120px 0;border-top:1px solid var(--line)}
+  .feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
+  .feat{padding:42px 32px;background:var(--ink);min-height:280px;display:flex;flex-direction:column}
+  .feat .num{font-family:var(--mono);font-size:11px;color:var(--accent);letter-spacing:.2em;margin-bottom:24px}
+  .feat h4{
+    font-family:var(--serif);font-weight:400;font-size:28px;letter-spacing:-.01em;line-height:1.1;
+    color:var(--bone);margin-bottom:14px;
+  }
+  .feat h4 em{font-style:italic;color:var(--accent)}
+  .feat p{font-size:14px;color:var(--muted);line-height:1.6;flex:1}
+  .feat .meta{
+    margin-top:24px;font-family:var(--mono);font-size:10px;color:var(--muted-2);letter-spacing:.12em;
+    text-transform:uppercase;
+  }
+
+  /* ── Demo ── */
+  section.demo{padding:120px 0;border-top:1px solid var(--line)}
+  .demo-shell{
+    border:1px solid var(--line);border-radius:18px;overflow:hidden;
+    background:var(--ink-2);box-shadow:0 60px 120px -50px rgba(0,0,0,.7);
+  }
+  .demo-bar{
+    display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line);
+    background:var(--ink-3);
+  }
+  .dot-r{width:11px;height:11px;border-radius:50%;background:#3a3531}
+  .demo-bar .title{
+    margin-left:18px;font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.12em;
+  }
+  .demo-body{display:grid;grid-template-columns:240px 1fr;min-height:520px}
+  .demo-side{
+    border-right:1px solid var(--line);padding:22px 18px;background:var(--ink);
+  }
+  .demo-side h5{
+    font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.18em;text-transform:uppercase;
+    margin-bottom:14px;
+  }
+  .ses{
+    padding:10px 12px;border-radius:8px;font-size:13px;color:var(--bone-2);margin-bottom:4px;cursor:pointer;
+    display:flex;justify-content:space-between;align-items:center;
+  }
+  .ses:hover{background:var(--ink-2)}
+  .ses.active{background:var(--ink-2);color:var(--bone);box-shadow:inset 2px 0 0 var(--accent)}
+  .ses .when{font-family:var(--mono);font-size:10px;color:var(--muted-2)}
+  .demo-chat{padding:32px 36px;display:flex;flex-direction:column;gap:18px;overflow:hidden}
+  .msg{display:flex;gap:14px;align-items:flex-start;animation:fadeUp .8s ease both}
+  .msg .av{
+    width:30px;height:30px;border-radius:8px;flex-shrink:0;display:grid;place-items:center;
+    font-family:var(--mono);font-size:10px;font-weight:600;
+  }
+  .msg.user .av{background:var(--ink-3);color:var(--bone-2);border:1px solid var(--line)}
+  .msg.bot .av{background:var(--accent);color:var(--ink)}
+  .msg .body{font-size:14.5px;line-height:1.6;color:var(--bone-2);max-width:62ch}
+  .msg .body strong{color:var(--bone)}
+  .msg.bot .body{color:var(--bone)}
+  .tag{
+    display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;
+    font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    background:rgba(177,156,255,.08);color:var(--accent);border:1px solid rgba(177,156,255,.18);
+    margin-right:6px;
+  }
+  .agent-trace{
+    margin-top:12px;padding:14px 16px;border:1px dashed var(--line-2);border-radius:10px;
+    font-family:var(--mono);font-size:11.5px;color:var(--muted);line-height:1.8;
+  }
+  .agent-trace .arrow{color:var(--accent)}
+  .composer{
+    border-top:1px solid var(--line);padding:18px 24px;display:flex;gap:14px;align-items:center;background:var(--ink-3);
+  }
+  .composer input{
+    flex:1;background:transparent;border:0;outline:0;color:var(--bone);
+    font-family:var(--sans);font-size:14px;
+  }
+  .composer input::placeholder{color:var(--muted-2);font-style:italic;font-family:var(--serif)}
+  .composer .go{
+    background:var(--accent);color:var(--ink);padding:9px 18px;border-radius:999px;
+    font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;
+    border:0;cursor:pointer;
+  }
+  @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+  /* ── Numbers ── */
+  section.numbers{padding:120px 0;border-top:1px solid var(--line)}
+  .num-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .nblock{background:var(--ink);padding:48px 28px}
+  .nblock .v{
+    font-family:var(--serif);font-weight:400;font-size:84px;letter-spacing:-.04em;line-height:1;color:var(--bone);
+  }
+  .nblock .v em{font-style:italic;color:var(--accent)}
+  .nblock .l{margin-top:12px;font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+
+  /* ── Author / CTA ── */
+  section.author{padding:140px 0;border-top:1px solid var(--line);position:relative;overflow:hidden}
+  .author-grid{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center}
+  .author h2{
+    font-family:var(--serif);font-weight:300;font-size:clamp(40px,5.4vw,76px);line-height:1;letter-spacing:-.025em;
+  }
+  .author h2 em{font-style:italic;color:var(--accent);font-weight:400}
+  .author p{margin-top:24px;color:var(--bone-2);font-size:16px;line-height:1.65;max-width:46ch}
+  .quote-card{
+    border:1px solid var(--line);border-radius:18px;padding:36px;background:var(--ink-2);
+    position:relative;
+  }
+  .quote-card .q-mark{
+    font-family:var(--serif);font-style:italic;color:var(--accent);font-size:80px;line-height:1;
+    position:absolute;top:14px;left:24px;opacity:.4;
+  }
+  .quote-card blockquote{
+    font-family:var(--serif);font-style:italic;font-weight:400;font-size:22px;line-height:1.45;
+    color:var(--bone);padding-left:18px;
+  }
+  .quote-card .who{
+    margin-top:24px;display:flex;align-items:center;gap:14px;font-size:13px;color:var(--muted);
+  }
+  .quote-card .who .av{
+    width:36px;height:36px;border-radius:50%;background:var(--accent);color:var(--ink);
+    display:grid;place-items:center;font-family:var(--serif);font-style:italic;font-weight:500;
+  }
+
+  /* ── Footer ── */
+  footer{padding:60px 0 40px;border-top:1px solid var(--line)}
+  .foot-row{display:flex;justify-content:space-between;align-items:center;gap:30px;flex-wrap:wrap}
+  .foot-row .links{display:flex;gap:28px;font-size:13px;color:var(--muted)}
+  .foot-row .links a:hover{color:var(--accent)}
+  .colophon{margin-top:28px;font-family:var(--mono);font-size:10px;color:var(--muted-2);letter-spacing:.16em;text-transform:uppercase}
+
+  /* Reveal */
+  .reveal{opacity:0;transform:translateY(20px);transition:opacity .9s ease, transform .9s ease}
+  .reveal.in{opacity:1;transform:none}
+
+  /* ── Responsive ── */
+  @media (max-width: 1080px){
+    .hero-grid{grid-template-columns:1fr;gap:50px}
+    .agent-grid{grid-template-columns:repeat(2,1fr)}
+    .feat-grid{grid-template-columns:1fr}
+    .num-grid{grid-template-columns:repeat(2,1fr)}
+    .author-grid{grid-template-columns:1fr;gap:48px}
+    .demo-body{grid-template-columns:1fr}
+    .demo-side{display:none}
+  }
+  @media (max-width: 640px){
+    .wrap{padding:0 22px}
+    .agent-grid{grid-template-columns:1fr}
+    .nblock .v{font-size:64px}
+    .sec-head{flex-direction:column;align-items:flex-start;gap:18px}
+    .nav-meta a:not(.nav-cta){display:none}
+    header.hero{padding:60px 0 40px}
+  }
+</style>
+</head>
+<body>
+
+<!-- ─── NAV ─── -->
+<nav class="top">
+  <div class="wrap" style="display:flex;align-items:center;justify-content:space-between;padding:0">
+    <div class="brand">
+      <div class="mark">A</div>
+      <div class="name">Apex<em>Flow</em></div>
+    </div>
+    <div class="nav-meta">
+      <a href="#architecture">Architecture</a>
+      <a href="#agents">Agents</a>
+      <a href="#demo">Demo</a>
+      <a href="#author">Engineer</a>
+      <a class="nav-cta" href="https://github.com" target="_blank" rel="noopener">View Repository →</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ─── HERO ─── -->
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div>
+        <div class="eyebrow"><span class="dot"></span> A multi-agent system · v0.4 · 2026</div>
+        <h1 class="headline">
+          Eight specialists.<br>
+          <em>One</em> orchestrator.<br>
+          <span class="thin">Zero compromise.</span>
+        </h1>
+        <p class="lede" style="margin-top:42px">
+          ApexFlow is a hierarchical, multi-agent assistant that <strong>thinks, browses, executes
+          and reasons over your private knowledge</strong> — running entirely on your machine.
+          Built to demonstrate production-grade agent orchestration with LangGraph, Playwright and ChromaDB.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com" target="_blank">
+            Star on GitHub
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+          <a class="btn btn-ghost" href="#demo">
+            Watch the demo
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          </a>
+        </div>
+      </div>
+
+      <aside class="status-card" aria-label="Live status">
+        <div class="status-title">
+          <b>orchestrator.live</b>
+          <span class="ring" aria-hidden="true"></span>
+        </div>
+        <div class="status-row"><span class="k">Active agents</span><span class="v">8 / 8</span></div>
+        <div class="status-row"><span class="k">Avg superstep</span><span class="v">2.4 s</span></div>
+        <div class="status-row"><span class="k">Tool calls / hr</span><span class="v">1 312</span></div>
+        <div class="status-row"><span class="k">Knowledge corpus</span><span class="v">142 docs · 8.4k chunks</span></div>
+        <div class="status-row"><span class="k">Sandbox</span><span class="v">isolated · docker</span></div>
+        <div class="status-row"><span class="k">Trace</span><span class="v" style="color:var(--accent)">recording →</span></div>
+      </aside>
+    </div>
+  </div>
+</header>
+
+<!-- Marquee -->
+<div class="strip" aria-hidden="true">
+  <div class="strip-track">
+    <span><i class="dot"></i> LangGraph</span>
+    <span><i class="dot"></i> Playwright</span>
+    <span><i class="dot"></i> ChromaDB</span>
+    <span><i class="dot"></i> Claude · GPT-4 · Local</span>
+    <span><i class="dot"></i> SQLite checkpoints</span>
+    <span><i class="dot"></i> APScheduler</span>
+    <span><i class="dot"></i> Docker sandbox</span>
+    <span><i class="dot"></i> Pushover</span>
+    <span><i class="dot"></i> Adzuna · Serper</span>
+    <span><i class="dot"></i> Google Maps</span>
+    <span><i class="dot"></i> LangGraph</span>
+    <span><i class="dot"></i> Playwright</span>
+    <span><i class="dot"></i> ChromaDB</span>
+    <span><i class="dot"></i> Claude · GPT-4 · Local</span>
+    <span><i class="dot"></i> SQLite checkpoints</span>
+    <span><i class="dot"></i> APScheduler</span>
+    <span><i class="dot"></i> Docker sandbox</span>
+    <span><i class="dot"></i> Pushover</span>
+    <span><i class="dot"></i> Adzuna · Serper</span>
+    <span><i class="dot"></i> Google Maps</span>
+  </div>
+</div>
+
+<!-- ─── ARCHITECTURE ─── -->
+<section class="arch reveal" id="architecture">
+  <div class="wrap">
+    <div class="sec-head">
+      <div>
+        <div class="sec-num">§ 01 — System</div>
+        <h2>A hierarchical <em>orchestrator</em> that thinks before it dispatches.</h2>
+      </div>
+      <p>One LLM-driven planner decomposes intent and routes to the right specialist. Each agent owns a focused tool set, persists state through SQLite checkpoints, and returns evidence — never just opinions.</p>
+    </div>
+
+    <div class="arch-frame">
+      <div class="orch">
+        <div class="orch-badge">— Conductor —</div>
+        <div class="orch-pill">Orchestrator</div>
+        <div class="orch-sub">Plans · delegates · evaluates against success criteria · re-plans on failure</div>
+      </div>
+
+      <div class="agent-bus" aria-hidden="true"></div>
+
+      <div class="agent-grid" id="agents">
+
+        <article class="agent">
+          <div class="num">01 / Specialist</div>
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></div>
+          <h3><em>Research</em> Agent</h3>
+          <p>Web, Wikipedia, arXiv and YouTube transcripts — synthesised with citations.</p>
+          <div class="tools">Google · Wikipedia · arXiv · YouTube</div>
+        </article>
+
+        <article class="agent">
+          <div class="num">02 / Specialist</div>
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 8h18"/></svg></div>
+          <h3><em>Browser</em> Agent</h3>
+          <p>Drives a real Chromium session — clicks, fills forms, extracts and screenshots.</p>
+          <div class="tools">Playwright · DOM extraction · vision</div>
+        </article>
+
+        <article class="agent">
+          <div class="num">03 / Specialist</div>
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg></div>
+          <h3><em>Documents</em> Agent</h3>
+          <p>Reads, writes and charts — PDFs, spreadsheets, matplotlib, file ops.</p>
+          <div class="tools">PDF · CSV · XLSX · matplotlib</div>
+        </article>
+
+        <article class="agent">
+          <div class="num">04 / Specialist</div>
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div>
+          <h3><em>Knowledge</em> Agent</h3>
+          <p>Semantic search over your private corpus, with chunk-level provenance.</p>
+          <div class="tools">ChromaDB · embeddings · re-rank</div>
+        </article>
+
+        <article class="agent">
+          <div class="num">05 / Specialist</div>
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2c4 4 6 8 6 11a6 6 0 0 1-12 0c0-3 2-7 6-11z"/><circle cx="12" cy="12" r="2.5"/></svg></div>
+          <h3><em>Location</em> Agent</h3>
+          <p>Address analysis, nearby amenities, commute times, apartment scoring.</p>
+          <div class="tools">Google Places · Maps · geocoding</div>
+        </article>
+
+        <article class="agent">
+          <div class="num">06 / Specialist</div>
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></div>
+          <h3><em>System</em> Agent</h3>
+          <p>Cron-style scheduling, push notifications, sandboxed Python execution.</p>
+          <div class="tools">APScheduler · Pushover · REPL</div>
+        </article>
+
+        <article class="agent">
+          <div class="num">07 / Specialist</div>
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg></div>
+          <h3><em>Job Search</em> Agent</h3>
+          <p>Discovers roles, ranks fit, and tailors CVs and cover letters per posting.</p>
+          <div class="tools">Adzuna · Serper · ranking</div>
+        </article>
+
+        <article class="agent">
+          <div class="num">08 / Specialist</div>
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+          <h3><em>Interview</em> Coach</h3>
+          <p>Job-specific mock interviews with per-answer scoring and a final summary.</p>
+          <div class="tools">planning · scoring · summary</div>
+        </article>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── FEATURES ─── -->
+<section class="features reveal">
+  <div class="wrap">
+    <div class="sec-head">
+      <div>
+        <div class="sec-num">§ 02 — Capabilities</div>
+        <h2>Engineered for <em>agency</em>, not just chat.</h2>
+      </div>
+      <p>Every design decision optimises for evidence-based answers, recoverable failures and observable behaviour. Built the way I'd build it for a customer.</p>
+    </div>
+
+    <div class="feat-grid">
+      <div class="feat">
+        <div class="num">01 — STATE</div>
+        <h4>Durable <em>memory</em> across sessions.</h4>
+        <p>Every superstep is checkpointed to SQLite via LangGraph. Conversations survive restarts, branch, and replay deterministically — the same primitive used by Claude's own tooling.</p>
+        <div class="meta">SQLChatMessageHistory · LangGraph checkpoints</div>
+      </div>
+      <div class="feat">
+        <div class="num">02 — SAFETY</div>
+        <h4>Code runs <em>sandboxed</em> by default.</h4>
+        <p>Python execution happens in an isolated Docker REPL with a scoped filesystem. The browser agent runs Chromium in a controlled context — no unbounded shell access ever leaves the box.</p>
+        <div class="meta">Docker · scoped sandbox/ · network policy</div>
+      </div>
+      <div class="feat">
+        <div class="num">03 — RECALL</div>
+        <h4>Your documents, <em>retrievable</em>.</h4>
+        <p>Drop in PDFs, markdown, CSVs. ApexFlow indexes with ChromaDB and lets the orchestrator reason over the corpus alongside live web evidence — provenance preserved per chunk.</p>
+        <div class="meta">ChromaDB · semantic search · per-chunk citation</div>
+      </div>
+      <div class="feat">
+        <div class="num">04 — TIME</div>
+        <h4>Tasks that <em>run while you sleep</em>.</h4>
+        <p>Schedule any agent task on cron. ApexFlow re-queues the orchestrator at the right moment, runs the workflow, and pings you on Pushover when something changes.</p>
+        <div class="meta">APScheduler · Pushover notifications</div>
+      </div>
+      <div class="feat">
+        <div class="num">05 — TRUST</div>
+        <h4>Success criteria, <em>verified</em>.</h4>
+        <p>Every prompt accepts an optional success criterion. The orchestrator checks the result against it and re-plans if it fell short — a cheap, reliable evaluator loop.</p>
+        <div class="meta">self-eval · re-planning · transparent traces</div>
+      </div>
+      <div class="feat">
+        <div class="num">06 — REACH</div>
+        <h4>Real tools, <em>real APIs</em>.</h4>
+        <p>Google Maps and Places, Adzuna, Serper, YouTube Transcript, arXiv, Wikipedia, Pushover — wired in production-style with secrets management and graceful degradation.</p>
+        <div class="meta">10+ integrated APIs · env-driven config</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── DEMO ─── -->
+<section class="demo reveal" id="demo">
+  <div class="wrap">
+    <div class="sec-head">
+      <div>
+        <div class="sec-num">§ 03 — In motion</div>
+        <h2>One prompt. <em>Many agents</em>. A traceable result.</h2>
+      </div>
+      <p>Here's what an actual superstep looks like: the orchestrator decomposes the request, dispatches in parallel, gathers evidence, and answers — with the trace visible at every step.</p>
+    </div>
+
+    <div class="demo-shell">
+      <div class="demo-bar">
+        <span class="dot-r"></span><span class="dot-r"></span><span class="dot-r"></span>
+        <span class="title">apexflow · session: berlin-relocation · superstep #14</span>
+      </div>
+      <div class="demo-body">
+        <aside class="demo-side">
+          <h5>Sessions</h5>
+          <div class="ses active"><span>Berlin relocation</span><span class="when">now</span></div>
+          <div class="ses"><span>Q1 hiring research</span><span class="when">2d</span></div>
+          <div class="ses"><span>arXiv weekly digest</span><span class="when">1w</span></div>
+          <div class="ses"><span>Apartment shortlist</span><span class="when">2w</span></div>
+          <h5 style="margin-top:32px">Scheduled</h5>
+          <div class="ses"><span>arXiv · daily 08:00</span><span class="when">cron</span></div>
+          <div class="ses"><span>Job watch · 4h</span><span class="when">cron</span></div>
+        </aside>
+
+        <div class="demo-chat">
+          <div class="msg user">
+            <div class="av">U</div>
+            <div class="body">Find three apartments in Prenzlauer Berg under €2 200, walking distance to a daycare, then summarise the daycare reviews and schedule a recap for Friday at 9.</div>
+          </div>
+
+          <div class="msg bot">
+            <div class="av">A</div>
+            <div class="body">
+              <div style="margin-bottom:10px">
+                <span class="tag">Browser</span><span class="tag">Location</span><span class="tag">Research</span><span class="tag">System</span>
+              </div>
+              <strong>Three candidates that match your constraints:</strong>
+              <div class="agent-trace">
+                <div><span class="arrow">→</span> orchestrator.plan() · 4 sub-tasks identified</div>
+                <div><span class="arrow">→</span> browser.search(immobilienscout24) · 47 listings · filtered → 3</div>
+                <div><span class="arrow">→</span> location.nearby(daycare, 600m) · 8 facilities</div>
+                <div><span class="arrow">→</span> research.reviews(google_maps) · 142 reviews · summarised</div>
+                <div><span class="arrow">→</span> system.schedule("Friday 09:00") · cron set · pushover armed</div>
+                <div><span class="arrow">→</span> evaluate(success_criteria) · ✓ passed</div>
+              </div>
+              <p style="margin-top:14px;color:var(--bone-2);font-size:14px;line-height:1.6">
+                <strong>1. Schönhauser Allee 124</strong> — €1 980, 380m to Kita Sonnenschein (4.6★, "warm staff, good food").<br>
+                <strong>2. Stargarder Straße 7</strong> — €2 150, 510m to Kita Pfefferwerk (4.4★, "creative program").<br>
+                <strong>3. Greifenhagener 18</strong> — €2 090, 290m to Kita Wichtelhaus (4.7★, "small groups, bilingual").
+              </p>
+              <p style="margin-top:12px;color:var(--muted);font-size:13px">
+                Recap scheduled for <em style="color:var(--accent);font-style:italic;font-family:var(--serif)">Fri 09:00</em>. I'll re-check listings and notify you if any drop.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="composer">
+        <input placeholder="Ask anything — or hand off a project…" />
+        <span class="mono" style="color:var(--muted-2)">⌘ ↵</span>
+        <button class="go">Dispatch</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── NUMBERS ─── -->
+<section class="numbers reveal">
+  <div class="wrap">
+    <div class="sec-head">
+      <div>
+        <div class="sec-num">§ 04 — At a glance</div>
+        <h2>Built to <em>show what's possible</em>.</h2>
+      </div>
+      <p>Numbers that matter to a serious customer evaluating multi-agent systems for production work.</p>
+    </div>
+    <div class="num-grid">
+      <div class="nblock">
+        <div class="v"><em>8</em></div>
+        <div class="l">Specialist agents</div>
+      </div>
+      <div class="nblock">
+        <div class="v">30<em>+</em></div>
+        <div class="l">Integrated tools</div>
+      </div>
+      <div class="nblock">
+        <div class="v">100<em>%</em></div>
+        <div class="l">Local-first execution</div>
+      </div>
+      <div class="nblock">
+        <div class="v">0<em>.</em></div>
+        <div class="l">Vendor lock-in</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ─── AUTHOR / CTA ─── -->
+<section class="author reveal" id="author">
+  <div class="wrap">
+    <div class="author-grid">
+      <div>
+        <h2>Designed and engineered<br>by <em>Uwe Moser</em>.</h2>
+        <p>
+          ApexFlow is my reference build for serious multi-agent work — the kind of system I help
+          teams design, ship and operate. If you're prototyping an internal copilot, an automation
+          fabric or a customer-facing agent, this is the conversation worth having.
+        </p>
+        <div class="cta-row" style="margin-top:36px">
+          <a class="btn btn-primary" href="mailto:blu_ray@web.de">
+            Start a conversation
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+          <a class="btn btn-ghost" href="https://github.com" target="_blank">View the source</a>
+        </div>
+      </div>
+
+      <aside class="quote-card">
+        <div class="q-mark">"</div>
+        <blockquote>
+          The interesting question isn't whether one model can answer a question.
+          It's whether a system of agents can deliver an outcome — reliably, observably, on budget.
+        </blockquote>
+        <div class="who">
+          <div class="av">U</div>
+          <div>
+            <div style="color:var(--bone)">Uwe Moser</div>
+            <div>Engineer · Berlin</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- ─── FOOTER ─── -->
+<footer>
+  <div class="wrap">
+    <div class="rule" style="margin-bottom:36px"></div>
+    <div class="foot-row">
+      <div class="brand">
+        <div class="mark">A</div>
+        <div class="name">Apex<em>Flow</em></div>
+      </div>
+      <div class="links">
+        <a href="#architecture">Architecture</a>
+        <a href="#agents">Agents</a>
+        <a href="#demo">Demo</a>
+        <a href="https://github.com" target="_blank">GitHub</a>
+        <a href="mailto:blu_ray@web.de">Contact</a>
+      </div>
+    </div>
+    <div class="colophon">
+      © 2026 Uwe Moser · Set in Fraunces, Instrument Sans &amp; JetBrains Mono · Built with care, not templates
+    </div>
+  </div>
+</footer>
+
+<script>
+  // Scroll reveal
+  const io = new IntersectionObserver((entries)=>{
+    entries.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
+  },{threshold:.12});
+  document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+</script>
+
+</body>
+</html>
